@@ -9,8 +9,9 @@
     </header>
 
     <section class="panel">
-      <div class="line">
-        <b>Manifest:</b> <code>{{ MANIFEST_URL }}</code>
+      <div class="line manifest-line">
+        <b>Manifest:</b>
+        <code class="manifest-code">{{ MANIFEST_URL }}</code>
       </div>
       <div v-if="manifest" class="line">
         <b>Segments:</b> {{ manifest.segment_count }}
@@ -196,6 +197,19 @@ onMounted(() => {
   font-size: 13px;
 }
 
+.manifest-line {
+  display: grid;
+  gap: 6px;
+}
+
+.manifest-code {
+  display: block;
+  max-width: 100%;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
 .actions {
   display: flex;
   gap: 8px;
@@ -239,5 +253,20 @@ button.secondary {
 
 .dim {
   color: #6b7280;
+}
+
+@media (max-width: 768px) {
+  .page {
+    padding: 14px;
+  }
+
+  .header h1 {
+    font-size: 24px;
+  }
+
+  .segment-row {
+    grid-template-columns: 1fr;
+    gap: 4px;
+  }
 }
 </style>

@@ -11,7 +11,9 @@
     <section class="panel">
       <div class="line manifest-line">
         <b>Manifest:</b>
-        <code class="manifest-code">{{ MANIFEST_URL }}</code>
+        <code class="manifest-code" :title="MANIFEST_URL">{{
+          MANIFEST_URL
+        }}</code>
       </div>
       <div v-if="manifest" class="line">
         <b>Segments:</b> {{ manifest.segment_count }}
@@ -198,16 +200,18 @@ onMounted(() => {
 }
 
 .manifest-line {
-  display: grid;
-  gap: 6px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
 }
 
 .manifest-code {
-  display: block;
-  max-width: 100%;
-  white-space: normal;
-  overflow-wrap: anywhere;
-  word-break: break-word;
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .actions {

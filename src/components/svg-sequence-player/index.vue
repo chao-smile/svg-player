@@ -1,5 +1,9 @@
 <template>
-  <div class="root" :style="themeVars">
+  <div
+    class="root"
+    :class="{ 'blend-supported': supportsBlendMode }"
+    :style="themeVars"
+  >
     <div class="status">
       <span v-if="playerState === 'loading'">加载段落数据中...</span>
       <span v-else-if="playerState === 'error'" class="err">{{
@@ -367,6 +371,11 @@ const themeVars = computed(() => ({
   "--hl-color": props.highlightColor,
 }));
 
+const supportsBlendMode =
+  typeof CSS !== "undefined" &&
+  typeof CSS.supports === "function" &&
+  CSS.supports("mix-blend-mode", "multiply");
+
 watch(
   () => props.segmentAssets,
   () => {
@@ -447,8 +456,12 @@ defineExpose<SvgSequencePlayerExpose>({
 
 .fill {
   fill: var(--hl-color);
+  fill-opacity: 0.32;
+  stroke: none;
+}
+
+.blend-supported .fill {
   fill-opacity: 0.6;
   mix-blend-mode: multiply;
-  stroke: none;
 }
 </style>

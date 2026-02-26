@@ -41,8 +41,8 @@
                     : 0)
                 "
                 :height="expandBox(run.bbox).h"
-                rx="6"
-                ry="6"
+                :rx="highlightRadius"
+                :ry="highlightRadius"
               />
             </clipPath>
           </template>
@@ -58,8 +58,8 @@
               :y="expandBox(run.bbox).y"
               :width="expandBox(run.bbox).w"
               :height="expandBox(run.bbox).h"
-              rx="6"
-              ry="6"
+              :rx="highlightRadius"
+              :ry="highlightRadius"
             />
             <rect
               class="fill"
@@ -68,8 +68,8 @@
               :width="expandBox(run.bbox).w"
               :height="expandBox(run.bbox).h"
               :clip-path="`url(#clip-${run.id})`"
-              rx="6"
-              ry="6"
+              :rx="highlightRadius"
+              :ry="highlightRadius"
             />
           </g>
         </g>
@@ -101,10 +101,12 @@ const props = withDefaults(
     segmentAssets: SegmentAsset[];
     showOutline?: boolean;
     highlightColor?: string;
+    highlightRadius?: number;
   }>(),
   {
     showOutline: false,
     highlightColor: "#f2b4ae",
+    highlightRadius: 0,
   },
 );
 
@@ -370,6 +372,8 @@ const hint = computed(() => {
 const themeVars = computed(() => ({
   "--hl-color": props.highlightColor,
 }));
+
+const highlightRadius = computed(() => Math.max(0, props.highlightRadius ?? 0));
 
 const supportsBlendMode =
   typeof CSS !== "undefined" &&

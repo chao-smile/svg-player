@@ -413,6 +413,7 @@ defineExpose<SvgSequencePlayerExpose>({
 .stage {
   position: relative;
   width: min(100%, 1100px);
+  isolation: isolate;
 }
 
 .image {
@@ -427,6 +428,7 @@ defineExpose<SvgSequencePlayerExpose>({
   inset: 0;
   width: 100%;
   height: 100%;
+  pointer-events: none;
 }
 
 .base {
@@ -445,7 +447,8 @@ defineExpose<SvgSequencePlayerExpose>({
 
 .fill {
   fill: var(--hl-color);
-  fill-opacity: 0.72;
+  fill-opacity: 0.6;
+  mix-blend-mode: multiply;
   stroke: none;
 }
 </style>

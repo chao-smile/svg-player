@@ -100,7 +100,7 @@ const props = withDefaults(
   }>(),
   {
     showOutline: false,
-    highlightColor: "#ffc107",
+    highlightColor: "#f2b4ae",
   },
 );
 
@@ -398,7 +398,7 @@ defineExpose<SvgSequencePlayerExpose>({
 .root {
   display: grid;
   gap: 10px;
-  --hl-color: #ffc107;
+  --hl-color: #f2b4ae;
 }
 
 .status {
@@ -431,9 +431,9 @@ defineExpose<SvgSequencePlayerExpose>({
 
 .base {
   fill: var(--hl-color);
-  fill-opacity: 0.14;
+  fill-opacity: 0.08;
   stroke: var(--hl-color);
-  stroke-opacity: 0.38;
+  stroke-opacity: 0.3;
   stroke-width: 1;
 }
 
@@ -445,7 +445,7 @@ defineExpose<SvgSequencePlayerExpose>({
 
 .fill {
   fill: var(--hl-color);
-  fill-opacity: 0.62;
+  fill-opacity: 0.72;
   stroke: none;
 }
 </style>

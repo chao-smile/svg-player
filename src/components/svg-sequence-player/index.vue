@@ -573,7 +573,7 @@ const activeTextLineIndex = computed(() => {
 });
 
 const textSpacerStyle = computed(() => {
-  const h = Math.max(0, textStageHeight.value / 2 - 28);
+  const h = Math.max(0, textStageHeight.value / 2);
   return { height: `${h}px` };
 });
 
@@ -600,8 +600,12 @@ function centerActiveTextLine(behavior: ScrollBehavior = "smooth") {
   const activeEl = textLineEls.get(activeLine.id);
   if (!activeEl) return;
 
+  const stageRect = stage.getBoundingClientRect();
+  const activeRect = activeEl.getBoundingClientRect();
   const targetTop =
-    activeEl.offsetTop + activeEl.offsetHeight / 2 - stage.clientHeight / 2;
+    stage.scrollTop +
+    (activeRect.top + activeRect.height / 2) -
+    (stageRect.top + stageRect.height / 2);
   const maxTop = Math.max(0, stage.scrollHeight - stage.clientHeight);
   const nextTop = Math.max(0, Math.min(targetTop, maxTop));
   if (behavior === "auto") {

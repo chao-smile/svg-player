@@ -87,19 +87,18 @@
       class="text-stage"
     >
       <div class="text-content">
+        <div aria-hidden="true" class="text-spacer" :style="textSpacerStyle" />
         <p
           v-for="(line, index) in textLines"
           :key="line.id"
           :ref="(el) => bindTextLineEl(line.id, el)"
           class="text-segment"
-          :class="{
-            active: index === activeTextLineIndex,
-            played: activeTextLineIndex >= 0 && index < activeTextLineIndex,
-          }"
+          :class="{ active: index === activeTextLineIndex }"
           :style="textLineStyle(index, line)"
         >
           {{ line.text }}
         </p>
+        <div aria-hidden="true" class="text-spacer" :style="textSpacerStyle" />
       </div>
     </div>
   </div>
@@ -169,6 +168,8 @@ const currentTimeMs = ref(0);
 const runProgress = reactive<Record<string, number>>({});
 const textStageRef = ref<HTMLElement | null>(null);
 const textLineEls = new Map<string, HTMLElement>();
+const textStageHeight = ref(0);
+let textStageResizeObserver: ResizeObserver | null = null;
 
 const audio = new Audio();
 let raf = 0;
@@ -239,6 +240,7 @@ function tick() {
       runProgress[run.id] = Math.max(prev, next);
     }
   }
+  centerActiveTextLine("auto");
 
   if (stopAtMs != null && tMs >= stopAtMs) {
     const active = segments.value.find((s) => s.id === activeId);
@@ -566,10 +568,14 @@ const activeTextLineIndex = computed(() => {
   );
 });
 
+const textSpacerStyle = computed(() => {
+  const h = Math.max(0, textStageHeight.value / 2 - 28);
+  return { height: `${h}px` };
+});
+
 function lineProgress(index: number, line: TextLineModel): number {
   if (activeTextLineIndex.value < 0) return 0;
-  if (index < activeTextLineIndex.value) return 1;
-  if (index > activeTextLineIndex.value) return 0;
+  if (index !== activeTextLineIndex.value) return 0;
   const duration = Math.max(1, line.t1 - line.t0);
   return Math.max(0, Math.min(1, (currentTimeMs.value - line.t0) / duration));
 }
@@ -594,7 +600,33 @@ function centerActiveTextLine(behavior: ScrollBehavior = "smooth") {
     activeEl.offsetTop + activeEl.offsetHeight / 2 - stage.clientHeight / 2;
   const maxTop = Math.max(0, stage.scrollHeight - stage.clientHeight);
   const nextTop = Math.max(0, Math.min(targetTop, maxTop));
+  if (behavior === "auto") {
+    if (Math.abs(stage.scrollTop - nextTop) > 0.5) stage.scrollTop = nextTop;
+    return;
+  }
   stage.scrollTo({ top: nextTop, behavior });
+}
+
+function syncTextStageSize() {
+  const stage = textStageRef.value;
+  textStageHeight.value = stage?.clientHeight ?? 0;
+}
+
+function bindTextStageObserver() {
+  textStageResizeObserver?.disconnect();
+  textStageResizeObserver = null;
+  const stage = textStageRef.value;
+  if (!stage || typeof ResizeObserver === "undefined") {
+    syncTextStageSize();
+    return;
+  }
+
+  textStageResizeObserver = new ResizeObserver(() => {
+    syncTextStageSize();
+    centerActiveTextLine("auto");
+  });
+  textStageResizeObserver.observe(stage);
+  syncTextStageSize();
 }
 
 watch(
@@ -627,11 +659,24 @@ watch(displayMode, (mode) => {
   });
 });
 
+watch(textStageRef, () => {
+  bindTextStageObserver();
+});
+
+watch(textLines, () => {
+  void nextTick(() => {
+    centerActiveTextLine("auto");
+  });
+});
+
 onMounted(() => {
+  bindTextStageObserver();
   emit("state-change", playerState.value);
 });
 
 onBeforeUnmount(() => {
+  textStageResizeObserver?.disconnect();
+  textStageResizeObserver = null;
   stopInternal(false);
 });
 
@@ -700,11 +745,14 @@ defineExpose<SvgSequencePlayerExpose>({
   min-height: 100%;
   max-width: 900px;
   margin: 0 auto;
-  padding: 40px 12px;
+  padding: 0 12px;
   display: grid;
-  align-content: center;
   justify-items: center;
   gap: 22px;
+}
+
+.text-spacer {
+  width: 1px;
 }
 
 .text-segment {
@@ -727,10 +775,6 @@ defineExpose<SvgSequencePlayerExpose>({
   transition:
     background 140ms linear,
     opacity 180ms ease;
-}
-
-.text-segment.played {
-  opacity: 0.86;
 }
 
 .text-segment.active {

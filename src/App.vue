@@ -34,6 +34,13 @@
         <button :disabled="!canPause" @click="handlePauseButton">
           {{ pauseText }}
         </button>
+        <button
+          :disabled="!canAdjustRate"
+          class="secondary"
+          @click="handleSpeedButton"
+        >
+          {{ speedButtonText }}
+        </button>
         <button :disabled="loading" class="secondary" @click="loadManifest">
           重新加载数据
         </button>
@@ -48,6 +55,7 @@
         ref="playerRef"
         :image-url="imageUrl"
         :segment-assets="segmentAssets"
+        :playback-rate="playbackRate"
         @finished="onPlayerFinished"
         @state-change="onPlayerStateChange"
       />
@@ -95,6 +103,8 @@ const playerRef = ref<SvgSequencePlayerExpose | null>(null);
 const playerState = ref<PlayerState>("loading");
 const finishedCount = ref(0);
 const finishedAt = ref("");
+const playbackRateOptions = [1, 1.25, 1.5, 2] as const;
+const playbackRate = ref<number>(playbackRateOptions[0]);
 
 async function loadManifest() {
   loading.value = true;
@@ -131,6 +141,15 @@ function handlePauseButton() {
   playerRef.value?.togglePause();
 }
 
+function handleSpeedButton() {
+  const currentIndex = playbackRateOptions.findIndex(
+    (rate) => rate === playbackRate.value,
+  );
+  const nextIndex =
+    currentIndex >= 0 ? (currentIndex + 1) % playbackRateOptions.length : 0;
+  playbackRate.value = playbackRateOptions[nextIndex]!;
+}
+
 function onPlayerFinished() {
   finishedCount.value += 1;
   finishedAt.value = new Date().toLocaleTimeString();
@@ -158,9 +177,13 @@ const canPlay = computed(
 const canPause = computed(
   () => playerState.value === "playing" || playerState.value === "paused",
 );
+const canAdjustRate = computed(
+  () => !loading.value && !errorText.value && segmentAssets.value.length > 0,
+);
 const pauseText = computed(() =>
   playerState.value === "paused" ? "继续" : "暂停",
 );
+const speedButtonText = computed(() => `倍速 ${playbackRate.value}x`);
 
 onMounted(() => {
   void loadManifest();

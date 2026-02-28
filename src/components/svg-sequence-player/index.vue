@@ -88,17 +88,17 @@
     >
       <div class="text-content">
         <p
-          v-for="(segment, index) in segments"
-          :key="segment.id"
-          :ref="(el) => bindTextSegmentEl(segment.id, el)"
+          v-for="(line, index) in textLines"
+          :key="line.id"
+          :ref="(el) => bindTextLineEl(line.id, el)"
           class="text-segment"
           :class="{
-            active: index === currentSegmentIndex,
-            played: index < currentSegmentIndex,
+            active: index === activeTextLineIndex,
+            played: activeTextLineIndex >= 0 && index < activeTextLineIndex,
           }"
-          :style="textSegmentStyle(index, segment)"
+          :style="textLineStyle(index, line)"
         >
-          {{ segment.text }}
+          {{ line.text }}
         </p>
       </div>
     </div>
@@ -118,12 +118,22 @@ import {
 import { computeRunProgress, expandBox, loadSegmentModels } from "./model";
 import type {
   PlayerState,
+  RunModel,
   SegmentAsset,
   SegmentModel,
   SvgSequencePlayerExpose,
+  WordModel,
 } from "./types";
 
 type DisplayMode = "image" | "text";
+type TextLineModel = {
+  id: string;
+  text: string;
+  segmentIndex: number;
+  segmentId: string;
+  t0: number;
+  t1: number;
+};
 
 const props = withDefaults(
   defineProps<{
@@ -158,7 +168,7 @@ const currentSegmentIndex = ref<number>(-1);
 const currentTimeMs = ref(0);
 const runProgress = reactive<Record<string, number>>({});
 const textStageRef = ref<HTMLElement | null>(null);
-const textSegmentEls = new Map<string, HTMLElement>();
+const textLineEls = new Map<string, HTMLElement>();
 
 const audio = new Audio();
 let raf = 0;
@@ -469,7 +479,7 @@ function toSoftColor(color: string, alpha: number): string {
   return `rgba(242, 180, 174, ${safeAlpha})`;
 }
 
-function bindTextSegmentEl(
+function bindTextLineEl(
   id: string,
   el: Element | { $el?: Element | null } | null,
 ) {
@@ -481,36 +491,103 @@ function bindTextSegmentEl(
         : null;
 
   if (node) {
-    textSegmentEls.set(id, node);
+    textLineEls.set(id, node);
   } else {
-    textSegmentEls.delete(id);
+    textLineEls.delete(id);
   }
 }
 
-function segmentProgress(index: number, segment: SegmentModel): number {
-  if (currentSegmentIndex.value < 0) return 0;
-  if (index < currentSegmentIndex.value) return 1;
-  if (index > currentSegmentIndex.value) return 0;
-  const duration = Math.max(1, segment.t1 - segment.t0);
-  return Math.max(
-    0,
-    Math.min(1, (currentTimeMs.value - segment.t0) / duration),
-  );
+function formatLineText(words: WordModel[]): string {
+  const punct = /^[,.;:!?，。！？、）》】\])]+$/;
+  const joined: string[] = [];
+  for (const word of words) {
+    if (!joined.length || punct.test(word.text)) {
+      joined.push(word.text);
+    } else {
+      joined.push(` ${word.text}`);
+    }
+  }
+  return joined.join("").trim();
 }
 
-function textSegmentStyle(index: number, segment: SegmentModel) {
+function lineTimeRange(run: RunModel, segment: SegmentModel) {
+  const timedWords = run.words.filter(
+    (w): w is WordModel & { t0: number; t1: number } =>
+      typeof w.t0 === "number" && typeof w.t1 === "number",
+  );
+  if (!timedWords.length) return { t0: segment.t0, t1: segment.t1 };
   return {
-    "--seg-progress": `${(segmentProgress(index, segment) * 100).toFixed(2)}%`,
+    t0: Math.min(...timedWords.map((w) => w.t0)),
+    t1: Math.max(...timedWords.map((w) => w.t1)),
   };
 }
 
-function centerActiveTextSegment(behavior: ScrollBehavior = "smooth") {
+const textLines = computed<TextLineModel[]>(() =>
+  segments.value.flatMap((segment, segmentIndex) =>
+    segment.runs.map((run, runIndex) => {
+      const range = lineTimeRange(run, segment);
+      return {
+        id: `${segment.id}-line-${runIndex + 1}`,
+        text: formatLineText(run.words),
+        segmentIndex,
+        segmentId: segment.id,
+        t0: range.t0,
+        t1: range.t1,
+      };
+    }),
+  ),
+);
+
+const activeTextLineIndex = computed(() => {
+  if (currentSegmentIndex.value < 0) return -1;
+  const currentLines = textLines.value;
+  if (!currentLines.length) return -1;
+
+  const currentSegmentLines = currentLines.filter(
+    (line) => line.segmentIndex === currentSegmentIndex.value,
+  );
+  if (!currentSegmentLines.length) return -1;
+
+  const tMs = currentTimeMs.value;
+  const activeLine = currentSegmentLines.find(
+    (line) => tMs >= line.t0 && tMs < line.t1,
+  );
+  if (activeLine)
+    return currentLines.findIndex((line) => line.id === activeLine.id);
+
+  if (tMs < currentSegmentLines[0]!.t0) {
+    return currentLines.findIndex(
+      (line) => line.id === currentSegmentLines[0]!.id,
+    );
+  }
+  return currentLines.findIndex(
+    (line) =>
+      line.id === currentSegmentLines[currentSegmentLines.length - 1]!.id,
+  );
+});
+
+function lineProgress(index: number, line: TextLineModel): number {
+  if (activeTextLineIndex.value < 0) return 0;
+  if (index < activeTextLineIndex.value) return 1;
+  if (index > activeTextLineIndex.value) return 0;
+  const duration = Math.max(1, line.t1 - line.t0);
+  return Math.max(0, Math.min(1, (currentTimeMs.value - line.t0) / duration));
+}
+
+function textLineStyle(index: number, line: TextLineModel) {
+  return {
+    "--seg-progress": `${(lineProgress(index, line) * 100).toFixed(2)}%`,
+  };
+}
+
+function centerActiveTextLine(behavior: ScrollBehavior = "smooth") {
   if (displayMode.value !== "text") return;
   const stage = textStageRef.value;
   if (!stage) return;
-  const active = segments.value[currentSegmentIndex.value];
-  if (!active) return;
-  const activeEl = textSegmentEls.get(active.id);
+  if (activeTextLineIndex.value < 0) return;
+  const activeLine = textLines.value[activeTextLineIndex.value];
+  if (!activeLine) return;
+  const activeEl = textLineEls.get(activeLine.id);
   if (!activeEl) return;
 
   const targetTop =
@@ -537,16 +614,16 @@ watch(
   { immediate: true },
 );
 
-watch(currentSegmentIndex, () => {
+watch(activeTextLineIndex, () => {
   void nextTick(() => {
-    centerActiveTextSegment("smooth");
+    centerActiveTextLine("smooth");
   });
 });
 
 watch(displayMode, (mode) => {
   if (mode !== "text") return;
   void nextTick(() => {
-    centerActiveTextSegment("auto");
+    centerActiveTextLine("auto");
   });
 });
 
@@ -608,7 +685,8 @@ defineExpose<SvgSequencePlayerExpose>({
 .text-stage {
   width: min(100%, 1100px);
   height: clamp(260px, 62vh, 620px);
-  overflow: hidden;
+  overflow-y: auto;
+  overflow-x: hidden;
   scrollbar-width: none;
   -ms-overflow-style: none;
 }

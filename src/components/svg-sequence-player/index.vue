@@ -551,11 +551,15 @@ const activeTextLineIndex = computed(() => {
   if (!currentSegmentLines.length) return -1;
 
   const tMs = currentTimeMs.value;
-  const activeLine = currentSegmentLines.find(
+  const activeCandidates = currentSegmentLines.filter(
     (line) => tMs >= line.t0 && tMs < line.t1,
   );
-  if (activeLine)
+  if (activeCandidates.length) {
+    const activeLine = activeCandidates.reduce((best, current) =>
+      current.t0 > best.t0 ? current : best,
+    );
     return currentLines.findIndex((line) => line.id === activeLine.id);
+  }
 
   if (tMs < currentSegmentLines[0]!.t0) {
     return currentLines.findIndex(

@@ -102,11 +102,13 @@ const props = withDefaults(
     showOutline?: boolean;
     highlightColor?: string;
     highlightRadius?: number;
+    playbackRate?: number;
   }>(),
   {
     showOutline: false,
     highlightColor: "#f2b4ae",
     highlightRadius: 0,
+    playbackRate: 1,
   },
 );
 
@@ -139,6 +141,15 @@ function setState(next: PlayerState) {
 function stopRaf() {
   if (raf) cancelAnimationFrame(raf);
   raf = 0;
+}
+
+function applyPlaybackRate(rate: number) {
+  audio.playbackRate = rate;
+  // In some WebView/browser combinations this helps make the speed change obvious.
+  if ("preservesPitch" in audio) {
+    (audio as HTMLMediaElement & { preservesPitch?: boolean }).preservesPitch =
+      false;
+  }
 }
 
 function resetAllProgress() {
@@ -234,11 +245,13 @@ async function playSegment(index: number, token: number): Promise<boolean> {
   }
 
   try {
+    applyPlaybackRate(effectivePlaybackRate.value);
     await seekToMs(segment.t0, token);
     if (token !== sequenceToken) return false;
 
     await audio.play();
     if (token !== sequenceToken) return false;
+    applyPlaybackRate(effectivePlaybackRate.value);
 
     stopRaf();
     raf = requestAnimationFrame(tick);
@@ -374,6 +387,10 @@ const themeVars = computed(() => ({
 }));
 
 const highlightRadius = computed(() => Math.max(0, props.highlightRadius ?? 0));
+const effectivePlaybackRate = computed(() => {
+  const rate = Number(props.playbackRate);
+  return Number.isFinite(rate) && rate > 0 ? rate : 1;
+});
 
 const supportsBlendMode =
   typeof CSS !== "undefined" &&
@@ -385,6 +402,14 @@ watch(
   () => {
     stopInternal(false);
     void loadModels();
+  },
+  { immediate: true },
+);
+
+watch(
+  effectivePlaybackRate,
+  (rate) => {
+    applyPlaybackRate(rate);
   },
   { immediate: true },
 );

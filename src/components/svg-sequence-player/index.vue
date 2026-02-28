@@ -85,6 +85,9 @@
       v-else-if="displayMode === 'text' && segments.length"
       ref="textStageRef"
       class="text-stage"
+      @scroll.passive="handleTextStageScroll"
+      @wheel.passive="handleTextStageUserInteraction"
+      @touchstart.passive="handleTextStageUserInteraction"
     >
       <div class="text-content">
         <div aria-hidden="true" class="text-spacer" :style="textSpacerStyle" />
@@ -143,6 +146,8 @@ const props = withDefaults(
     highlightRadius?: number;
     playbackRate?: number;
     displayMode?: DisplayMode;
+    autoFollowText?: boolean;
+    autoFollowResumeDelayMs?: number;
   }>(),
   {
     showOutline: false,
@@ -150,6 +155,8 @@ const props = withDefaults(
     highlightRadius: 0,
     playbackRate: 1,
     displayMode: "image",
+    autoFollowText: true,
+    autoFollowResumeDelayMs: 1800,
   },
 );
 
@@ -170,6 +177,9 @@ const textStageRef = ref<HTMLElement | null>(null);
 const textLineEls = new Map<string, HTMLElement>();
 const textStageHeight = ref(0);
 let textStageResizeObserver: ResizeObserver | null = null;
+const textAutoFollowAllowed = ref(true);
+let textAutoFollowResumeTimer = 0;
+let lastProgrammaticScrollAt = 0;
 
 const audio = new Audio();
 let raf = 0;
@@ -177,6 +187,7 @@ let stopAtMs: number | null = null;
 let sequenceToken = 0;
 let resolveSegment: ((ok: boolean) => void) | null = null;
 let cleanupSegmentListeners: (() => void) | null = null;
+let lastRenderedSegmentIndex = -1;
 
 function setState(next: PlayerState) {
   if (playerState.value === next) return;
@@ -204,6 +215,12 @@ function resetAllProgress() {
   }
 }
 
+function resetSegmentRunProgress(segmentIndex: number) {
+  const segment = segments.value[segmentIndex];
+  if (!segment) return;
+  for (const run of segment.runs) runProgress[run.id] = 0;
+}
+
 function settleSegment(ok: boolean) {
   if (!resolveSegment) return;
   cleanupSegmentListeners?.();
@@ -220,33 +237,24 @@ function activeSegmentId() {
 }
 
 function tick() {
-  const activeId = activeSegmentId();
-  if (!activeId) {
+  const activeIndex = currentSegmentIndex.value;
+  const active = segments.value[activeIndex];
+  if (!active) {
     stopRaf();
     return;
   }
 
   const tMs = audio.currentTime * 1000;
   currentTimeMs.value = tMs;
-  for (const segment of segments.value) {
-    const isActive = segment.id === activeId;
-    for (const run of segment.runs) {
-      if (!isActive) {
-        runProgress[run.id] = 0;
-        continue;
-      }
-      const next = computeRunProgress(run, tMs);
-      const prev = runProgress[run.id] ?? 0;
-      runProgress[run.id] = Math.max(prev, next);
-    }
+  for (const run of active.runs) {
+    const next = computeRunProgress(run, tMs);
+    const prev = runProgress[run.id] ?? 0;
+    runProgress[run.id] = Math.max(prev, next);
   }
   centerActiveTextLine("auto");
 
   if (stopAtMs != null && tMs >= stopAtMs) {
-    const active = segments.value.find((s) => s.id === activeId);
-    if (active) {
-      for (const run of active.runs) runProgress[run.id] = 1;
-    }
+    for (const run of active.runs) runProgress[run.id] = 1;
     audio.pause();
     stopRaf();
     settleSegment(true);
@@ -283,6 +291,10 @@ async function playSegment(index: number, token: number): Promise<boolean> {
   const segment = segments.value[index];
   if (!segment) return false;
 
+  if (lastRenderedSegmentIndex >= 0 && lastRenderedSegmentIndex !== index) {
+    resetSegmentRunProgress(lastRenderedSegmentIndex);
+  }
+  lastRenderedSegmentIndex = index;
   currentSegmentIndex.value = index;
   currentTimeMs.value = segment.t0;
   stopAtMs = segment.t1;
@@ -329,6 +341,7 @@ async function playSegment(index: number, token: number): Promise<boolean> {
 function stopInternal(setIdleState = true) {
   sequenceToken += 1;
   stopAtMs = null;
+  lastRenderedSegmentIndex = -1;
   currentTimeMs.value = 0;
   audio.pause();
   stopRaf();
@@ -361,6 +374,7 @@ async function playAll() {
   audio.pause();
   stopRaf();
   currentSegmentIndex.value = -1;
+  lastRenderedSegmentIndex = -1;
   currentTimeMs.value = 0;
   setState("idle");
   emit("finished");
@@ -446,6 +460,10 @@ const highlightRadius = computed(() => Math.max(0, props.highlightRadius ?? 0));
 const effectivePlaybackRate = computed(() => {
   const rate = Number(props.playbackRate);
   return Number.isFinite(rate) && rate > 0 ? rate : 1;
+});
+const effectiveAutoFollowResumeDelay = computed(() => {
+  const delay = Number(props.autoFollowResumeDelayMs);
+  return Number.isFinite(delay) && delay >= 0 ? delay : 1800;
 });
 
 const supportsBlendMode =
@@ -590,7 +608,19 @@ function textLineStyle(index: number, line: TextLineModel) {
   };
 }
 
-function centerActiveTextLine(behavior: ScrollBehavior = "smooth") {
+function shouldAutoFollowText() {
+  return (
+    displayMode.value === "text" &&
+    props.autoFollowText &&
+    textAutoFollowAllowed.value
+  );
+}
+
+function centerActiveTextLine(
+  behavior: ScrollBehavior = "smooth",
+  force = false,
+) {
+  if (!force && !shouldAutoFollowText()) return;
   if (displayMode.value !== "text") return;
   const stage = textStageRef.value;
   if (!stage) return;
@@ -608,6 +638,7 @@ function centerActiveTextLine(behavior: ScrollBehavior = "smooth") {
     (stageRect.top + stageRect.height / 2);
   const maxTop = Math.max(0, stage.scrollHeight - stage.clientHeight);
   const nextTop = Math.max(0, Math.min(targetTop, maxTop));
+  lastProgrammaticScrollAt = Date.now();
   if (behavior === "auto") {
     if (Math.abs(stage.scrollTop - nextTop) > 0.5) stage.scrollTop = nextTop;
     return;
@@ -637,6 +668,25 @@ function bindTextStageObserver() {
   syncTextStageSize();
 }
 
+function scheduleAutoFollowResume() {
+  window.clearTimeout(textAutoFollowResumeTimer);
+  textAutoFollowResumeTimer = window.setTimeout(() => {
+    textAutoFollowAllowed.value = true;
+    centerActiveTextLine("smooth", true);
+  }, effectiveAutoFollowResumeDelay.value);
+}
+
+function handleTextStageUserInteraction() {
+  if (!props.autoFollowText || displayMode.value !== "text") return;
+  textAutoFollowAllowed.value = false;
+  scheduleAutoFollowResume();
+}
+
+function handleTextStageScroll() {
+  if (Date.now() - lastProgrammaticScrollAt < 120) return;
+  handleTextStageUserInteraction();
+}
+
 watch(
   () => props.segmentAssets,
   () => {
@@ -661,11 +711,27 @@ watch(activeTextLineIndex, () => {
 });
 
 watch(displayMode, (mode) => {
+  window.clearTimeout(textAutoFollowResumeTimer);
+  textAutoFollowAllowed.value = true;
   if (mode !== "text") return;
   void nextTick(() => {
-    centerActiveTextLine("auto");
+    centerActiveTextLine("auto", true);
   });
 });
+
+watch(
+  () => props.autoFollowText,
+  (enabled) => {
+    if (!enabled) {
+      window.clearTimeout(textAutoFollowResumeTimer);
+      textAutoFollowAllowed.value = false;
+      return;
+    }
+    textAutoFollowAllowed.value = true;
+    centerActiveTextLine("smooth", true);
+  },
+  { immediate: true },
+);
 
 watch(textStageRef, () => {
   bindTextStageObserver();
@@ -673,7 +739,7 @@ watch(textStageRef, () => {
 
 watch(textLines, () => {
   void nextTick(() => {
-    centerActiveTextLine("auto");
+    centerActiveTextLine("auto", true);
   });
 });
 
@@ -683,6 +749,7 @@ onMounted(() => {
 });
 
 onBeforeUnmount(() => {
+  window.clearTimeout(textAutoFollowResumeTimer);
   textStageResizeObserver?.disconnect();
   textStageResizeObserver = null;
   stopInternal(false);

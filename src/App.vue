@@ -21,6 +21,7 @@
       <div class="line">
         <b>Used Mock Files:</b> {{ SVG_PLAYER_USED_MOCK_FILES.length }}
       </div>
+      <div class="line"><b>View Mode:</b> {{ displayModeText }}</div>
       <div class="line"><b>Player State:</b> {{ playerState }}</div>
       <div class="line">
         <b>Finished Count:</b> {{ finishedCount
@@ -41,6 +42,13 @@
         >
           {{ speedButtonText }}
         </button>
+        <button
+          :disabled="!canToggleMode"
+          class="secondary"
+          @click="handleModeButton"
+        >
+          {{ modeButtonText }}
+        </button>
         <button :disabled="loading" class="secondary" @click="loadManifest">
           重新加载数据
         </button>
@@ -55,6 +63,7 @@
         ref="playerRef"
         :image-url="imageUrl"
         :segment-assets="segmentAssets"
+        :display-mode="displayMode"
         :playback-rate="playbackRate"
         @finished="onPlayerFinished"
         @state-change="onPlayerStateChange"
@@ -105,6 +114,7 @@ const finishedCount = ref(0);
 const finishedAt = ref("");
 const playbackRateOptions = [1, 1.25, 1.5, 2] as const;
 const playbackRate = ref<number>(playbackRateOptions[0]);
+const displayMode = ref<"image" | "text">("image");
 
 async function loadManifest() {
   loading.value = true;
@@ -150,6 +160,10 @@ function handleSpeedButton() {
   playbackRate.value = playbackRateOptions[nextIndex]!;
 }
 
+function handleModeButton() {
+  displayMode.value = displayMode.value === "image" ? "text" : "image";
+}
+
 function onPlayerFinished() {
   finishedCount.value += 1;
   finishedAt.value = new Date().toLocaleTimeString();
@@ -180,10 +194,19 @@ const canPause = computed(
 const canAdjustRate = computed(
   () => !loading.value && !errorText.value && segmentAssets.value.length > 0,
 );
+const canToggleMode = computed(
+  () => !loading.value && !errorText.value && segmentAssets.value.length > 0,
+);
 const pauseText = computed(() =>
   playerState.value === "paused" ? "继续" : "暂停",
 );
 const speedButtonText = computed(() => `倍速 ${playbackRate.value}x`);
+const modeButtonText = computed(() =>
+  displayMode.value === "image" ? "切换纯文字" : "切换图文",
+);
+const displayModeText = computed(() =>
+  displayMode.value === "image" ? "图文播放" : "纯文字播放",
+);
 
 onMounted(() => {
   void loadManifest();

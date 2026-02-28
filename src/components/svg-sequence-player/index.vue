@@ -14,7 +14,12 @@
 
     <div
       class="stage"
-      v-if="segments.length && imageWidth > 0 && imageHeight > 0"
+      v-if="
+        displayMode === 'image' &&
+        segments.length &&
+        imageWidth > 0 &&
+        imageHeight > 0
+      "
     >
       <img class="image" :src="imageUrl" alt="shared image" />
       <svg
@@ -75,12 +80,35 @@
         </g>
       </svg>
     </div>
+
+    <div
+      v-else-if="displayMode === 'text' && segments.length"
+      ref="textStageRef"
+      class="text-stage"
+    >
+      <div class="text-content">
+        <p
+          v-for="(segment, index) in segments"
+          :key="segment.id"
+          :ref="(el) => bindTextSegmentEl(segment.id, el)"
+          class="text-segment"
+          :class="{
+            active: index === currentSegmentIndex,
+            played: index < currentSegmentIndex,
+          }"
+          :style="textSegmentStyle(index, segment)"
+        >
+          {{ segment.text }}
+        </p>
+      </div>
+    </div>
   </div>
 </template>
 
 <script setup lang="ts">
 import {
   computed,
+  nextTick,
   onBeforeUnmount,
   onMounted,
   reactive,
@@ -95,6 +123,8 @@ import type {
   SvgSequencePlayerExpose,
 } from "./types";
 
+type DisplayMode = "image" | "text";
+
 const props = withDefaults(
   defineProps<{
     imageUrl: string;
@@ -103,12 +133,14 @@ const props = withDefaults(
     highlightColor?: string;
     highlightRadius?: number;
     playbackRate?: number;
+    displayMode?: DisplayMode;
   }>(),
   {
     showOutline: false,
     highlightColor: "#f2b4ae",
     highlightRadius: 0,
     playbackRate: 1,
+    displayMode: "image",
   },
 );
 
@@ -123,7 +155,10 @@ const imageWidth = ref(0);
 const imageHeight = ref(0);
 const segments = ref<SegmentModel[]>([]);
 const currentSegmentIndex = ref<number>(-1);
+const currentTimeMs = ref(0);
 const runProgress = reactive<Record<string, number>>({});
+const textStageRef = ref<HTMLElement | null>(null);
+const textSegmentEls = new Map<string, HTMLElement>();
 
 const audio = new Audio();
 let raf = 0;
@@ -181,6 +216,7 @@ function tick() {
   }
 
   const tMs = audio.currentTime * 1000;
+  currentTimeMs.value = tMs;
   for (const segment of segments.value) {
     const isActive = segment.id === activeId;
     for (const run of segment.runs) {
@@ -236,6 +272,7 @@ async function playSegment(index: number, token: number): Promise<boolean> {
   if (!segment) return false;
 
   currentSegmentIndex.value = index;
+  currentTimeMs.value = segment.t0;
   stopAtMs = segment.t1;
 
   if (audio.src !== segment.audioUrl) {
@@ -280,6 +317,7 @@ async function playSegment(index: number, token: number): Promise<boolean> {
 function stopInternal(setIdleState = true) {
   sequenceToken += 1;
   stopAtMs = null;
+  currentTimeMs.value = 0;
   audio.pause();
   stopRaf();
   settleSegment(false);
@@ -311,6 +349,7 @@ async function playAll() {
   audio.pause();
   stopRaf();
   currentSegmentIndex.value = -1;
+  currentTimeMs.value = 0;
   setState("idle");
   emit("finished");
 }
@@ -384,8 +423,13 @@ const hint = computed(() => {
 
 const themeVars = computed(() => ({
   "--hl-color": props.highlightColor,
+  "--hl-soft-color": toSoftColor(props.highlightColor, 0.56),
+  "--seg-radius": String(Math.max(0, props.highlightRadius ?? 0)),
 }));
 
+const displayMode = computed<DisplayMode>(() =>
+  props.displayMode === "text" ? "text" : "image",
+);
 const highlightRadius = computed(() => Math.max(0, props.highlightRadius ?? 0));
 const effectivePlaybackRate = computed(() => {
   const rate = Number(props.playbackRate);
@@ -396,6 +440,85 @@ const supportsBlendMode =
   typeof CSS !== "undefined" &&
   typeof CSS.supports === "function" &&
   CSS.supports("mix-blend-mode", "multiply");
+
+function toSoftColor(color: string, alpha: number): string {
+  const safeAlpha = Math.max(0, Math.min(1, alpha));
+  const hex = color.trim().replace("#", "");
+  if (/^[0-9a-fA-F]{3}$/.test(hex)) {
+    const r = Number.parseInt(`${hex[0]}${hex[0]}`, 16);
+    const g = Number.parseInt(`${hex[1]}${hex[1]}`, 16);
+    const b = Number.parseInt(`${hex[2]}${hex[2]}`, 16);
+    return `rgba(${r}, ${g}, ${b}, ${safeAlpha})`;
+  }
+  if (/^[0-9a-fA-F]{6}$/.test(hex)) {
+    const r = Number.parseInt(hex.slice(0, 2), 16);
+    const g = Number.parseInt(hex.slice(2, 4), 16);
+    const b = Number.parseInt(hex.slice(4, 6), 16);
+    return `rgba(${r}, ${g}, ${b}, ${safeAlpha})`;
+  }
+  const rgbMatch = color.match(/rgba?\(([^)]+)\)/i);
+  if (rgbMatch) {
+    const [r, g, b] = rgbMatch[1]!
+      .split(",")
+      .slice(0, 3)
+      .map((v) => Number.parseFloat(v.trim()));
+    if ([r, g, b].every((v) => Number.isFinite(v))) {
+      return `rgba(${r}, ${g}, ${b}, ${safeAlpha})`;
+    }
+  }
+  return `rgba(242, 180, 174, ${safeAlpha})`;
+}
+
+function bindTextSegmentEl(
+  id: string,
+  el: Element | { $el?: Element | null } | null,
+) {
+  const node =
+    el instanceof HTMLElement
+      ? el
+      : el && "$el" in el && el.$el instanceof HTMLElement
+        ? el.$el
+        : null;
+
+  if (node) {
+    textSegmentEls.set(id, node);
+  } else {
+    textSegmentEls.delete(id);
+  }
+}
+
+function segmentProgress(index: number, segment: SegmentModel): number {
+  if (currentSegmentIndex.value < 0) return 0;
+  if (index < currentSegmentIndex.value) return 1;
+  if (index > currentSegmentIndex.value) return 0;
+  const duration = Math.max(1, segment.t1 - segment.t0);
+  return Math.max(
+    0,
+    Math.min(1, (currentTimeMs.value - segment.t0) / duration),
+  );
+}
+
+function textSegmentStyle(index: number, segment: SegmentModel) {
+  return {
+    "--seg-progress": `${(segmentProgress(index, segment) * 100).toFixed(2)}%`,
+  };
+}
+
+function centerActiveTextSegment(behavior: ScrollBehavior = "smooth") {
+  if (displayMode.value !== "text") return;
+  const stage = textStageRef.value;
+  if (!stage) return;
+  const active = segments.value[currentSegmentIndex.value];
+  if (!active) return;
+  const activeEl = textSegmentEls.get(active.id);
+  if (!activeEl) return;
+
+  const targetTop =
+    activeEl.offsetTop + activeEl.offsetHeight / 2 - stage.clientHeight / 2;
+  const maxTop = Math.max(0, stage.scrollHeight - stage.clientHeight);
+  const nextTop = Math.max(0, Math.min(targetTop, maxTop));
+  stage.scrollTo({ top: nextTop, behavior });
+}
 
 watch(
   () => props.segmentAssets,
@@ -413,6 +536,19 @@ watch(
   },
   { immediate: true },
 );
+
+watch(currentSegmentIndex, () => {
+  void nextTick(() => {
+    centerActiveTextSegment("smooth");
+  });
+});
+
+watch(displayMode, (mode) => {
+  if (mode !== "text") return;
+  void nextTick(() => {
+    centerActiveTextSegment("auto");
+  });
+});
 
 onMounted(() => {
   emit("state-change", playerState.value);
@@ -467,6 +603,60 @@ defineExpose<SvgSequencePlayerExpose>({
   width: 100%;
   height: 100%;
   pointer-events: none;
+}
+
+.text-stage {
+  width: min(100%, 1100px);
+  height: clamp(260px, 62vh, 620px);
+  overflow: hidden;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+
+.text-stage::-webkit-scrollbar {
+  width: 0;
+  height: 0;
+}
+
+.text-content {
+  min-height: 100%;
+  max-width: 900px;
+  margin: 0 auto;
+  padding: 40px 12px;
+  display: grid;
+  align-content: center;
+  justify-items: center;
+  gap: 22px;
+}
+
+.text-segment {
+  margin: 0;
+  font-size: clamp(24px, 3vw, 42px);
+  line-height: 1.35;
+  letter-spacing: 0.01em;
+  color: #1f2937;
+  width: fit-content;
+  max-width: 100%;
+  text-wrap: pretty;
+  text-align: center;
+  padding: 0.1em 0.24em;
+  border-radius: calc(var(--seg-radius, 0) * 1px);
+  background: linear-gradient(
+    to right,
+    var(--hl-soft-color) 0 var(--seg-progress),
+    transparent var(--seg-progress) 100%
+  );
+  transition:
+    background 140ms linear,
+    opacity 180ms ease;
+}
+
+.text-segment.played {
+  opacity: 0.86;
+}
+
+.text-segment.active {
+  opacity: 1;
 }
 
 .base {

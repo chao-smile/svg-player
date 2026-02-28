@@ -19,6 +19,12 @@
         <b>Segments:</b> {{ manifest.segment_count }}
       </div>
       <div class="line">
+        <b>Data Index:</b> {{ currentPageIndex + 1 }} / {{ pageItems.length }}
+      </div>
+      <div class="line" v-if="currentPage">
+        <b>Current Item:</b> {{ currentPage.title }}
+      </div>
+      <div class="line">
         <b>Used Mock Files:</b> {{ SVG_PLAYER_USED_MOCK_FILES.length }}
       </div>
       <div class="line"><b>View Mode:</b> {{ displayModeText }}</div>
@@ -49,6 +55,13 @@
         >
           {{ modeButtonText }}
         </button>
+        <button
+          :disabled="!canLoadNextData"
+          class="secondary"
+          @click="handleNextData"
+        >
+          加载下一条数据
+        </button>
         <button :disabled="loading" class="secondary" @click="loadManifest">
           重新加载数据
         </button>
@@ -59,15 +72,22 @@
     </section>
 
     <section class="panel" v-if="segmentAssets.length && imageUrl">
-      <SvgSequencePlayer
-        ref="playerRef"
-        :image-url="imageUrl"
-        :segment-assets="segmentAssets"
-        :display-mode="displayMode"
-        :playback-rate="playbackRate"
-        @finished="onPlayerFinished"
-        @state-change="onPlayerStateChange"
-      />
+      <PageFlipList :items="pageItems" :active-index="currentPageIndex">
+        <template #default>
+          <div class="player-card">
+            <div class="player-card-title">{{ currentPage?.title }}</div>
+            <SvgSequencePlayer
+              ref="playerRef"
+              :image-url="imageUrl"
+              :segment-assets="segmentAssets"
+              :display-mode="displayMode"
+              :playback-rate="playbackRate"
+              @finished="onPlayerFinished"
+              @state-change="onPlayerStateChange"
+            />
+          </div>
+        </template>
+      </PageFlipList>
     </section>
 
     <section class="panel" v-if="manifest">
@@ -82,9 +102,11 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, ref } from "vue";
+import { computed, ref, watch } from "vue";
+import PageFlipList from "./components/page-flip-list/index.vue";
 import { SvgSequencePlayer } from "./components/svg-sequence-player";
 import type {
+  ManifestSegment,
   PlayerState,
   SegmentAsset,
   SegmentManifest,
@@ -101,6 +123,56 @@ import {
 
 const MANIFEST_URL = `${SVG_PLAYER_MANIFEST_URL} (from ${SVG_PLAYER_DATA_ROOT})`;
 
+type PlayerPageItem = {
+  id: string;
+  title: string;
+  manifest: SegmentManifest;
+  imageUrl: string;
+  segmentAssets: SegmentAsset[];
+};
+
+function makePageManifest(segment: ManifestSegment): SegmentManifest {
+  return {
+    ...SVG_PLAYER_MANIFEST,
+    segment_count: 1,
+    segments: [segment],
+  };
+}
+
+const pageItems: PlayerPageItem[] = (() => {
+  const assetById = new Map(
+    (SVG_PLAYER_SEGMENT_ASSETS as SegmentAsset[]).map((asset) => [
+      asset.id,
+      asset,
+    ]),
+  );
+  const segmentPages = SVG_PLAYER_MANIFEST.segments
+    .map((segment, index) => {
+      const asset = assetById.get(segment.id);
+      if (!asset) return null;
+      return {
+        id: segment.id,
+        title: `数据 ${index + 1} · ${segment.id}`,
+        manifest: makePageManifest(segment),
+        imageUrl: SVG_PLAYER_IMAGE_URL,
+        segmentAssets: [asset],
+      };
+    })
+    .filter((item): item is PlayerPageItem => item !== null);
+
+  if (segmentPages.length > 0) return segmentPages;
+
+  return [
+    {
+      id: "all-segments",
+      title: "全部段落",
+      manifest: SVG_PLAYER_MANIFEST,
+      imageUrl: SVG_PLAYER_IMAGE_URL,
+      segmentAssets: SVG_PLAYER_SEGMENT_ASSETS as SegmentAsset[],
+    },
+  ];
+})();
+
 const loading = ref(true);
 const errorText = ref("");
 const manifest = ref<SegmentManifest | null>(null);
@@ -115,15 +187,19 @@ const finishedAt = ref("");
 const playbackRateOptions = [1, 1.25, 1.5, 2] as const;
 const playbackRate = ref<number>(playbackRateOptions[0]);
 const displayMode = ref<"image" | "text">("image");
+const currentPageIndex = ref(0);
+
+const currentPage = computed(() => pageItems[currentPageIndex.value] ?? null);
 
 async function loadManifest() {
   loading.value = true;
   errorText.value = "";
   try {
-    const data: SegmentManifest = SVG_PLAYER_MANIFEST;
-    manifest.value = data;
-    imageUrl.value = SVG_PLAYER_IMAGE_URL;
-    segmentAssets.value = SVG_PLAYER_SEGMENT_ASSETS as SegmentAsset[];
+    const page = currentPage.value;
+    if (!page) throw new Error("No page data available");
+    manifest.value = page.manifest;
+    imageUrl.value = page.imageUrl;
+    segmentAssets.value = page.segmentAssets;
   } catch (e) {
     errorText.value = String((e as Error)?.message ?? e);
   } finally {
@@ -164,6 +240,13 @@ function handleModeButton() {
   displayMode.value = displayMode.value === "image" ? "text" : "image";
 }
 
+function handleNextData() {
+  if (!pageItems.length) return;
+  playerRef.value?.stop();
+  finishedAt.value = "";
+  currentPageIndex.value = (currentPageIndex.value + 1) % pageItems.length;
+}
+
 function onPlayerFinished() {
   finishedCount.value += 1;
   finishedAt.value = new Date().toLocaleTimeString();
@@ -176,7 +259,7 @@ function onPlayerStateChange(state: PlayerState) {
 const mainButtonText = computed(() => {
   if (playerState.value === "playing" || playerState.value === "paused")
     return "停止播放";
-  return "开始顺序播放 5 段";
+  return `开始顺序播放 ${segmentAssets.value.length} 段`;
 });
 
 const canPlay = computed(
@@ -197,6 +280,13 @@ const canAdjustRate = computed(
 const canToggleMode = computed(
   () => !loading.value && !errorText.value && segmentAssets.value.length > 0,
 );
+const canLoadNextData = computed(
+  () =>
+    !loading.value &&
+    !errorText.value &&
+    pageItems.length > 1 &&
+    playerState.value !== "playing",
+);
 const pauseText = computed(() =>
   playerState.value === "paused" ? "继续" : "暂停",
 );
@@ -208,9 +298,13 @@ const displayModeText = computed(() =>
   displayMode.value === "image" ? "图文播放" : "纯文字播放",
 );
 
-onMounted(() => {
-  void loadManifest();
-});
+watch(
+  currentPageIndex,
+  () => {
+    void loadManifest();
+  },
+  { immediate: true },
+);
 </script>
 
 <style scoped>
@@ -239,6 +333,16 @@ onMounted(() => {
   padding: 14px;
   display: grid;
   gap: 10px;
+}
+
+.player-card {
+  display: grid;
+  gap: 10px;
+}
+
+.player-card-title {
+  font-size: 13px;
+  color: #6b7280;
 }
 
 .line {

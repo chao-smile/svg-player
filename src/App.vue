@@ -19,10 +19,10 @@
         <b>Segments:</b> {{ manifest.segment_count }}
       </div>
       <div class="line">
-        <b>Data Index:</b> {{ currentPageIndex + 1 }} / {{ pageItems.length }}
+        <b>Page Index:</b> {{ currentPageIndex + 1 }} / {{ pageItems.length }}
       </div>
       <div class="line" v-if="currentPage">
-        <b>Current Item:</b> {{ currentPage.title }}
+        <b>Current Page:</b> {{ currentPage.title }}
       </div>
       <div class="line">
         <b>Used Mock Files:</b> {{ SVG_PLAYER_USED_MOCK_FILES.length }}
@@ -60,7 +60,7 @@
           class="secondary"
           @click="handleNextData"
         >
-          加载下一条数据
+          加载下一页
         </button>
         <button :disabled="loading" class="secondary" @click="loadManifest">
           重新加载数据
@@ -131,11 +131,11 @@ type PlayerPageItem = {
   segmentAssets: SegmentAsset[];
 };
 
-function makePageManifest(segment: ManifestSegment): SegmentManifest {
+function makePageManifest(segments: ManifestSegment[]): SegmentManifest {
   return {
     ...SVG_PLAYER_MANIFEST,
-    segment_count: 1,
-    segments: [segment],
+    segment_count: segments.length,
+    segments,
   };
 }
 
@@ -146,19 +146,29 @@ const pageItems: PlayerPageItem[] = (() => {
       asset,
     ]),
   );
-  const segmentPages = SVG_PLAYER_MANIFEST.segments
-    .map((segment, index) => {
-      const asset = assetById.get(segment.id);
-      if (!asset) return null;
-      return {
-        id: segment.id,
-        title: `数据 ${index + 1} · ${segment.id}`,
-        manifest: makePageManifest(segment),
-        imageUrl: SVG_PLAYER_IMAGE_URL,
-        segmentAssets: [asset],
-      };
-    })
-    .filter((item): item is PlayerPageItem => item !== null);
+  const PAGE_SIZE = 5;
+  const segmentPages: PlayerPageItem[] = [];
+
+  for (let i = 0; i < SVG_PLAYER_MANIFEST.segments.length; i += PAGE_SIZE) {
+    const chunkSegments = SVG_PLAYER_MANIFEST.segments.slice(i, i + PAGE_SIZE);
+    const chunkAssets = chunkSegments
+      .map((segment) => assetById.get(segment.id))
+      .filter((asset): asset is SegmentAsset => Boolean(asset));
+
+    if (!chunkSegments.length || chunkAssets.length !== chunkSegments.length) {
+      continue;
+    }
+
+    const first = i + 1;
+    const last = i + chunkSegments.length;
+    segmentPages.push({
+      id: `page-${Math.floor(i / PAGE_SIZE) + 1}`,
+      title: `第 ${Math.floor(i / PAGE_SIZE) + 1} 页 · segments ${first}-${last}`,
+      manifest: makePageManifest(chunkSegments),
+      imageUrl: SVG_PLAYER_IMAGE_URL,
+      segmentAssets: chunkAssets,
+    });
+  }
 
   if (segmentPages.length > 0) return segmentPages;
 

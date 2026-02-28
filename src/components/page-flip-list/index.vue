@@ -1,19 +1,30 @@
 <template>
-  <div class="flip-list" :style="flipVars">
-    <transition name="flip-page" mode="out-in">
-      <div :key="`page-${safeIndex}`" class="flip-page">
-        <slot :item="activeItem" :index="safeIndex" />
-      </div>
-    </transition>
+  <div ref="rootRef" class="flip-list">
+    <div
+      v-for="(item, index) in renderItems"
+      :key="`st-page-${index}`"
+      class="st-page"
+      data-density="hard"
+    >
+      <slot :item="item" :index="index" />
+    </div>
   </div>
 </template>
 
 <script setup lang="ts">
-import { computed } from "vue";
+import { PageFlip } from "page-flip";
+import {
+  computed,
+  nextTick,
+  onBeforeUnmount,
+  onMounted,
+  ref,
+  watch,
+} from "vue";
 
 const props = withDefaults(
   defineProps<{
-    items: unknown[];
+    items: any[];
     activeIndex: number;
     durationMs?: number;
   }>(),
@@ -22,80 +33,121 @@ const props = withDefaults(
   },
 );
 
+const rootRef = ref<HTMLElement | null>(null);
+let pageFlip: PageFlip | null = null;
+let syncingByCode = false;
+
+const renderItems = computed(() => {
+  if (props.items.length >= 2) return props.items;
+  if (!props.items.length)
+    return [{ __placeholder: "empty-1" }, { __placeholder: "empty-2" }];
+  return [
+    props.items[0],
+    { ...props.items[0], id: `${props.items[0]?.id ?? "page"}-copy` },
+  ];
+});
+
 const safeIndex = computed(() => {
-  if (!props.items.length) return 0;
+  if (!renderItems.value.length) return 0;
   const idx = Math.trunc(props.activeIndex);
   if (idx < 0) return 0;
-  if (idx >= props.items.length) return props.items.length - 1;
+  if (idx >= renderItems.value.length) return renderItems.value.length - 1;
   return idx;
 });
 
-const activeItem = computed(() => props.items[safeIndex.value] ?? null);
+function initBook() {
+  const root = rootRef.value;
+  if (!root) return;
 
-const flipVars = computed(() => ({
-  "--flip-duration": `${props.durationMs}ms`,
-}));
+  pageFlip?.destroy();
+  pageFlip = new PageFlip(root, {
+    width: 980,
+    height: 1380,
+    size: "stretch",
+    minWidth: 320,
+    maxWidth: 1300,
+    minHeight: 360,
+    maxHeight: 1800,
+    showCover: true,
+    usePortrait: true,
+    drawShadow: true,
+    maxShadowOpacity: 0.48,
+    mobileScrollSupport: false,
+    useMouseEvents: false,
+    disableFlipByClick: true,
+    flippingTime: props.durationMs,
+  });
+  const pages = root.querySelectorAll(".st-page");
+  pageFlip.loadFromHTML(pages);
+  pageFlip.turnToPage(safeIndex.value);
+}
+
+async function reloadBook() {
+  await nextTick();
+  initBook();
+}
+
+function syncToIndex(index: number) {
+  if (!pageFlip) return;
+  const current = pageFlip.getCurrentPageIndex();
+  if (current === index) return;
+  syncingByCode = true;
+  pageFlip.flip(index, "bottom");
+  window.setTimeout(
+    () => {
+      syncingByCode = false;
+    },
+    Math.max(120, props.durationMs + 40),
+  );
+}
+
+watch(
+  () => renderItems.value.length,
+  () => {
+    void reloadBook();
+  },
+);
+
+watch(
+  safeIndex,
+  (index) => {
+    if (syncingByCode) return;
+    syncToIndex(index);
+  },
+  { immediate: true },
+);
+
+watch(
+  () => props.durationMs,
+  () => {
+    void reloadBook();
+  },
+);
+
+onMounted(() => {
+  initBook();
+});
+
+onBeforeUnmount(() => {
+  pageFlip?.destroy();
+  pageFlip = null;
+});
 </script>
 
 <style scoped>
 .flip-list {
-  perspective: 2200px;
-  transform-style: preserve-3d;
+  width: 100%;
+  max-width: 1100px;
+  margin: 0 auto;
   position: relative;
 }
 
-.flip-page {
-  transform-origin: right bottom;
-  backface-visibility: hidden;
-  transform-style: preserve-3d;
-  position: relative;
-}
-
-.flip-page::after {
-  content: "";
-  position: absolute;
-  inset: 0;
-  pointer-events: none;
-  background: linear-gradient(
-    135deg,
-    rgba(0, 0, 0, 0) 62%,
-    rgba(0, 0, 0, 0.08) 76%,
-    rgba(0, 0, 0, 0.16) 100%
-  );
-  opacity: 0;
-}
-
-.flip-page-enter-active,
-.flip-page-leave-active {
-  transition:
-    transform var(--flip-duration) cubic-bezier(0.18, 0.82, 0.24, 1),
-    opacity var(--flip-duration) ease-out,
-    filter var(--flip-duration) ease-out;
-  will-change: transform, opacity, filter;
-}
-
-.flip-page-enter-active::after,
-.flip-page-leave-active::after {
-  transition: opacity var(--flip-duration) ease;
-}
-
-.flip-page-enter-from {
-  opacity: 0;
-  transform: rotateY(84deg) rotateX(-8deg) scale(0.99);
-  filter: brightness(0.94);
-}
-
-.flip-page-enter-active::after {
-  opacity: 0.2;
-}
-
-.flip-page-leave-to {
-  opacity: 0.04;
-  transform: rotateY(-84deg) rotateX(8deg) scale(0.99);
-  filter: brightness(0.9);
-}
-
-.flip-page-leave-active::after {
-  opacity: 0.32;
+.st-page {
+  background: #fff;
+  overflow: hidden;
+  border-radius: 12px;
+  box-shadow:
+    0 18px 42px rgba(15, 23, 42, 0.14),
+    0 1px 0 rgba(15, 23, 42, 0.08);
 }
 </style>

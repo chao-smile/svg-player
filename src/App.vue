@@ -73,17 +73,17 @@
 
     <section class="panel" v-if="segmentAssets.length && imageUrl">
       <PageFlipList :items="pageItems" :active-index="currentPageIndex">
-        <template #default>
+        <template #default="{ item }">
           <div class="player-card">
-            <div class="player-card-title">{{ currentPage?.title }}</div>
+            <div class="player-card-title">{{ item?.title }}</div>
             <SvgSequencePlayer
-              ref="playerRef"
-              :image-url="imageUrl"
-              :segment-assets="segmentAssets"
+              :ref="(el) => bindPlayerRef(item?.id, el)"
+              :image-url="item?.imageUrl ?? imageUrl"
+              :segment-assets="item?.segmentAssets ?? segmentAssets"
               :display-mode="displayMode"
               :playback-rate="playbackRate"
-              @finished="onPlayerFinished"
-              @state-change="onPlayerStateChange"
+              @finished="onPlayerFinished(item?.id)"
+              @state-change="onPlayerStateChange(item?.id, $event)"
             />
           </div>
         </template>
@@ -102,7 +102,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref, watch } from "vue";
+import { computed, nextTick, reactive, ref, watch } from "vue";
 import PageFlipList from "./components/page-flip-list/index.vue";
 import { SvgSequencePlayer } from "./components/svg-sequence-player";
 import type {
@@ -172,7 +172,7 @@ const pageItems: PlayerPageItem[] = (() => {
 
   if (segmentPages.length > 0) return segmentPages;
 
-  return [
+  const fallback = [
     {
       id: "all-segments",
       title: "全部段落",
@@ -181,7 +181,18 @@ const pageItems: PlayerPageItem[] = (() => {
       segmentAssets: SVG_PLAYER_SEGMENT_ASSETS as SegmentAsset[],
     },
   ];
+
+  return fallback;
 })();
+
+if (pageItems.length === 1) {
+  const base = pageItems[0]!;
+  pageItems.push({
+    ...base,
+    id: `${base.id}-copy`,
+    title: `${base.title}（副本）`,
+  });
+}
 
 const loading = ref(true);
 const errorText = ref("");
@@ -189,7 +200,11 @@ const manifest = ref<SegmentManifest | null>(null);
 const imageUrl = ref("");
 const segmentAssets = ref<SegmentAsset[]>([]);
 
-const playerRef = ref<SvgSequencePlayerExpose | null>(null);
+const playerRefs = reactive<Record<string, SvgSequencePlayerExpose | null>>({});
+function bindPlayerRef(id: string | undefined, el: unknown) {
+  if (!id) return;
+  playerRefs[id] = (el as SvgSequencePlayerExpose | null) ?? null;
+}
 
 const playerState = ref<PlayerState>("loading");
 const finishedCount = ref(0);
@@ -200,6 +215,9 @@ const displayMode = ref<"image" | "text">("image");
 const currentPageIndex = ref(0);
 
 const currentPage = computed(() => pageItems[currentPageIndex.value] ?? null);
+const activePlayer = computed(() =>
+  currentPage.value ? (playerRefs[currentPage.value.id] ?? null) : null,
+);
 
 async function loadManifest() {
   loading.value = true;
@@ -218,7 +236,7 @@ async function loadManifest() {
 }
 
 async function handleMainButton() {
-  const player = playerRef.value;
+  const player = activePlayer.value;
   if (!player) return;
 
   const state = playerState.value;
@@ -234,7 +252,7 @@ async function handleMainButton() {
 }
 
 function handlePauseButton() {
-  playerRef.value?.togglePause();
+  activePlayer.value?.togglePause();
 }
 
 function handleSpeedButton() {
@@ -252,17 +270,19 @@ function handleModeButton() {
 
 function handleNextData() {
   if (!pageItems.length) return;
-  playerRef.value?.stop();
+  activePlayer.value?.stop();
   finishedAt.value = "";
   currentPageIndex.value = (currentPageIndex.value + 1) % pageItems.length;
 }
 
-function onPlayerFinished() {
+function onPlayerFinished(pageId: string | undefined) {
+  if (!pageId || pageId !== currentPage.value?.id) return;
   finishedCount.value += 1;
   finishedAt.value = new Date().toLocaleTimeString();
 }
 
-function onPlayerStateChange(state: PlayerState) {
+function onPlayerStateChange(pageId: string | undefined, state: PlayerState) {
+  if (!pageId || pageId !== currentPage.value?.id) return;
   playerState.value = state;
 }
 
@@ -310,8 +330,11 @@ const displayModeText = computed(() =>
 
 watch(
   currentPageIndex,
-  () => {
+  async () => {
     void loadManifest();
+    playerState.value = "loading";
+    await nextTick();
+    playerState.value = activePlayer.value?.getState() ?? "idle";
   },
   { immediate: true },
 );

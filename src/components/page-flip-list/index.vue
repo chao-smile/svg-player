@@ -61,14 +61,14 @@ function initBook() {
 
   pageFlip?.destroy();
   pageFlip = new PageFlip(root, {
-    width: 980,
-    height: 1380,
+    width: 560,
+    height: 840,
     size: "stretch",
-    minWidth: 320,
-    maxWidth: 1300,
-    minHeight: 360,
-    maxHeight: 1800,
-    showCover: true,
+    minWidth: 520,
+    maxWidth: 620,
+    minHeight: 780,
+    maxHeight: 980,
+    showCover: false,
     usePortrait: true,
     drawShadow: true,
     maxShadowOpacity: 0.48,
@@ -137,7 +137,7 @@ onBeforeUnmount(() => {
 <style scoped>
 .flip-list {
   width: 100%;
-  max-width: 1100px;
+  max-width: 620px;
   margin: 0 auto;
   position: relative;
 }

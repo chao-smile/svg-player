@@ -9,7 +9,6 @@
       <span v-else-if="playerState === 'error'" class="err">{{
         errorText
       }}</span>
-      <span v-else>{{ hint }}</span>
     </div>
 
     <div
@@ -433,24 +432,6 @@ async function loadModels() {
     setState("error");
   }
 }
-
-const hint = computed(() => {
-  const runs = segments.value.reduce(
-    (count, segment) => count + segment.runs.length,
-    0,
-  );
-  const timedWords = segments.value.reduce(
-    (count, segment) =>
-      count +
-      segment.runs.reduce(
-        (runCount, run) =>
-          runCount + run.words.filter((w) => typeof w.t0 === "number").length,
-        0,
-      ),
-    0,
-  );
-  return `segments=${segments.value.length}, runs=${runs}, timedWords=${timedWords}`;
-});
 
 const themeVars = computed(() => ({
   "--hl-color": props.highlightColor,

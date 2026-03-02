@@ -70,6 +70,11 @@
       />
     </section>
 
+    <section class="panel" v-if="segmentAssets.length && imageUrl">
+      <div class="title">SvgSequencePlayer Props</div>
+      <pre class="props-preview">{{ playerPropsJson }}</pre>
+    </section>
+
     <section class="panel" v-if="manifest">
       <div class="title">段落清单</div>
       <div v-for="item in manifest.segments" :key="item.id" class="segment-row">
@@ -207,6 +212,15 @@ const modeButtonText = computed(() =>
 const displayModeText = computed(() =>
   displayMode.value === "image" ? "图文播放" : "纯文字播放",
 );
+const playerPropsData = computed(() => ({
+  imageUrl: imageUrl.value,
+  segmentAssets: segmentAssets.value,
+  displayMode: displayMode.value,
+  playbackRate: playbackRate.value,
+}));
+const playerPropsJson = computed(() =>
+  JSON.stringify(playerPropsData.value, null, 2),
+);
 
 onMounted(async () => {
   await loadManifest();
@@ -301,6 +315,19 @@ button.secondary {
   gap: 10px;
   align-items: center;
   font-size: 13px;
+}
+
+.props-preview {
+  margin: 0;
+  padding: 12px;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  background: #f8fafc;
+  font-size: 12px;
+  line-height: 1.5;
+  white-space: pre;
+  overflow: auto;
+  max-height: 360px;
 }
 
 .dim {

@@ -88,8 +88,8 @@ export type SegmentModel = {
 export type SegmentAsset = {
   id: string;
   audioUrl: string;
-  ocrUrl: string;
-  ttsUrl: string;
+  ocr: OcrJson | Record<string, unknown>;
+  tts: TtsJson | Record<string, unknown>;
   text: string;
 };
 

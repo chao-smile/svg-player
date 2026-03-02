@@ -1,4 +1,13 @@
-import type { BBox, OcrJson, RunModel, SegmentAsset, SegmentModel, TtsJson, WordModel } from "./types";
+import type {
+  BBox,
+  OcrJson,
+  OcrWordRaw,
+  RunModel,
+  SegmentAsset,
+  SegmentModel,
+  TtsJson,
+  WordModel,
+} from "./types";
 
 function unionBBox(words: WordModel[]): BBox {
   const x0 = Math.min(...words.map((w) => w.bbox.x));
@@ -55,14 +64,66 @@ function clusterRuns(words: WordModel[], imageWidth: number): WordModel[][] {
   return all;
 }
 
+function isObject(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === "object";
+}
+
+function normalizeOcr(raw: SegmentAsset["ocr"]): OcrJson {
+  if (!isObject(raw)) throw new Error("ocr is invalid");
+  const rawObj = raw as Record<string, unknown>;
+  const data = isObject(rawObj.data) ? rawObj.data : rawObj;
+  const width = Number(data.width);
+  const height = Number(data.height);
+  const words = data.words;
+
+  if (
+    !Number.isFinite(width) ||
+    !Number.isFinite(height) ||
+    !Array.isArray(words)
+  ) {
+    throw new Error("ocr shape is invalid");
+  }
+
+  return {
+    code: Number(rawObj.code ?? 200),
+    data: {
+      width,
+      height,
+      words: words as OcrWordRaw[],
+    },
+  };
+}
+
+function normalizeTts(raw: SegmentAsset["tts"]): TtsJson {
+  if (!isObject(raw)) throw new Error("tts is invalid");
+  const rawObj = raw as Record<string, unknown>;
+  const payload = isObject(rawObj.payload) ? rawObj.payload : rawObj;
+  const subtitles = payload.subtitles;
+  if (!Array.isArray(subtitles)) {
+    throw new Error("tts shape is invalid");
+  }
+  return {
+    header: isObject(rawObj.header) ? rawObj.header : {},
+    payload: { subtitles },
+  };
+}
+
+function wordRect(word: OcrWordRaw): [number, number, number, number] {
+  if (Array.isArray(word.rotated_rect) && word.rotated_rect.length >= 4) {
+    const [x, y, w, h] = word.rotated_rect;
+    return [x, y, w, h];
+  }
+  return [0, 0, 1, 1];
+}
+
 function buildWords(ocr: OcrJson): WordModel[] {
   return ocr.data.words.map((word, idx) => {
-    const [x, y, w, h] = word.rotated_rect;
+    const [x, y, w, h] = wordRect(word);
     // Backend ocr points are center-based.
     return {
       id: `word-${idx}`,
       idx,
-      text: word.text,
+      text: word.text ?? "",
       bbox: { x: x - w / 2, y: y - h / 2, w, h },
     };
   });
@@ -90,35 +151,31 @@ function timeRange(words: WordModel[]) {
 }
 
 export async function loadSegmentModels(segmentAssets: SegmentAsset[]): Promise<{ imageWidth: number; imageHeight: number; segments: SegmentModel[] }> {
-  const loaded = await Promise.all(
-    segmentAssets.map(async (asset) => {
-      const [ocr, tts] = await Promise.all([
-        fetch(asset.ocrUrl, { cache: "no-store" }).then((r) => r.json() as Promise<OcrJson>),
-        fetch(asset.ttsUrl, { cache: "no-store" }).then((r) => r.json() as Promise<TtsJson>),
-      ]);
+  const loaded = segmentAssets.map((asset) => {
+    const ocr = normalizeOcr(asset.ocr);
+    const tts = normalizeTts(asset.tts);
 
-      const words = buildWords(ocr);
-      attachTokenTiming(words, tts);
+    const words = buildWords(ocr);
+    attachTokenTiming(words, tts);
 
-      const runs: RunModel[] = clusterRuns(words, ocr.data.width).map((line, i) => ({
-        id: `${asset.id}-run-${i + 1}`,
-        bbox: unionBBox(line),
-        words: line,
-      }));
+    const runs: RunModel[] = clusterRuns(words, ocr.data.width).map((line, i) => ({
+      id: `${asset.id}-run-${i + 1}`,
+      bbox: unionBBox(line),
+      words: line,
+    }));
 
-      const range = timeRange(words);
-      const segment: SegmentModel = {
-        id: asset.id,
-        audioUrl: asset.audioUrl,
-        text: asset.text,
-        t0: range.t0,
-        t1: range.t1,
-        runs,
-      };
+    const range = timeRange(words);
+    const segment: SegmentModel = {
+      id: asset.id,
+      audioUrl: asset.audioUrl,
+      text: asset.text,
+      t0: range.t0,
+      t1: range.t1,
+      runs,
+    };
 
-      return { segment, imageWidth: ocr.data.width, imageHeight: ocr.data.height };
-    }),
-  );
+    return { segment, imageWidth: ocr.data.width, imageHeight: ocr.data.height };
+  });
 
   return {
     imageWidth: loaded[0]?.imageWidth ?? 0,

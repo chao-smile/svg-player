@@ -138,19 +138,35 @@ onBeforeUnmount(() => {
 <style scoped>
 .flip-list {
   width: 100%;
-  max-width: 760px;
+  max-width: 860px;
   margin: 0 auto;
 }
 
 .flip-stage {
   width: 100%;
   aspect-ratio: 31 / 45;
-  max-height: min(82vh, 920px);
-  min-height: 500px;
+  min-height: clamp(420px, 68vw, 920px);
   margin: 0 auto;
-  perspective: 2200px;
-  perspective-origin: 80% 88%;
+  perspective: 2000px;
+  perspective-origin: 90% 92%;
   position: relative;
+  overflow: hidden;
+}
+
+.flip-stage::before {
+  content: "";
+  position: absolute;
+  inset: auto 2% 1.2% 2%;
+  height: 5%;
+  z-index: 0;
+  pointer-events: none;
+  background: linear-gradient(
+    180deg,
+    rgba(15, 23, 42, 0.16) 0%,
+    rgba(15, 23, 42, 0.04) 65%,
+    rgba(15, 23, 42, 0) 100%
+  );
+  filter: blur(10px);
 }
 
 .page {
@@ -160,8 +176,8 @@ onBeforeUnmount(() => {
   border-radius: 14px;
   background: #fff;
   box-shadow:
-    0 28px 56px rgba(15, 23, 42, 0.18),
-    0 1px 0 rgba(15, 23, 42, 0.1);
+    0 26px 46px rgba(15, 23, 42, 0.16),
+    0 1px 0 rgba(15, 23, 42, 0.08);
 }
 
 .page-current {
@@ -174,7 +190,7 @@ onBeforeUnmount(() => {
   transform-origin: 100% 100%;
   transform-style: preserve-3d;
   will-change: transform, clip-path, opacity, filter;
-  animation: peel-forward var(--flip-duration) cubic-bezier(0.2, 0.82, 0.22, 1)
+  animation: peel-forward var(--flip-duration) cubic-bezier(0.24, 0.82, 0.24, 1)
     both;
 }
 
@@ -188,10 +204,10 @@ onBeforeUnmount(() => {
   inset: 0;
   pointer-events: none;
   background: linear-gradient(
-    302deg,
-    rgba(0, 0, 0, 0.36) 0%,
-    rgba(0, 0, 0, 0.16) 12%,
-    rgba(0, 0, 0, 0) 32%
+    320deg,
+    rgba(0, 0, 0, 0.28) 0%,
+    rgba(0, 0, 0, 0.14) 12%,
+    rgba(0, 0, 0, 0) 34%
   );
   mix-blend-mode: multiply;
   animation: shadow-fade var(--flip-duration) ease both;
@@ -201,44 +217,48 @@ onBeforeUnmount(() => {
   position: absolute;
   right: -12%;
   bottom: -12%;
-  width: 56%;
-  height: 56%;
+  width: 62%;
+  height: 62%;
   pointer-events: none;
-  border-radius: 48% 52% 56% 44%;
+  border-radius: 44% 56% 60% 40%;
   background: radial-gradient(
-    circle at 4% 96%,
-    rgba(255, 255, 255, 0.72) 0%,
-    rgba(255, 255, 255, 0.22) 26%,
-    rgba(255, 255, 255, 0) 72%
+    circle at 8% 92%,
+    rgba(255, 255, 255, 0.8) 0%,
+    rgba(255, 255, 255, 0.28) 24%,
+    rgba(255, 255, 255, 0) 70%
   );
-  filter: blur(0.3px);
+  filter: blur(0.4px);
   animation: gloss-trace var(--flip-duration) ease both;
 }
 
 @keyframes peel-forward {
   0% {
     opacity: 1;
-    transform: rotateX(0deg) rotateY(0deg) rotateZ(0deg) translate(0, 0)
-      scale(1);
+    transform: rotateX(0deg) rotateY(0deg) rotateZ(0deg) translate(0, 0) scale(1);
     clip-path: polygon(0 0, 100% 0, 100% 100%, 0 100%);
     filter: brightness(1);
   }
-  32% {
-    transform: rotateX(0deg) rotateY(-8deg) rotateZ(2.8deg) translate(0.6%, 2%)
-      scale(0.995);
-    clip-path: polygon(0 0, 100% 0, 100% 80%, 0 100%);
+  22% {
+    transform: rotateX(0deg) rotateY(-3deg) rotateZ(1.1deg) translate(0.3%, 0.8%)
+      scale(0.998);
+    clip-path: polygon(0 0, 100% 0, 100% 90%, 95% 100%, 0 100%);
   }
-  62% {
-    transform: rotateX(5deg) rotateY(-24deg) rotateZ(6deg) translate(7%, 14%)
-      scale(0.98);
-    clip-path: polygon(0 0, 100% 0, 100% 42%, 0 100%);
+  48% {
+    transform: rotateX(2.4deg) rotateY(-11deg) rotateZ(2.3deg)
+      translate(2.8%, 4.6%) scale(0.992);
+    clip-path: polygon(0 0, 100% 0, 100% 76%, 86% 100%, 0 100%);
+  }
+  74% {
+    transform: rotateX(5.5deg) rotateY(-25deg) rotateZ(4.6deg)
+      translate(10%, 13.5%) scale(0.975);
+    clip-path: polygon(0 0, 100% 0, 100% 38%, 58% 100%, 0 100%);
   }
   100% {
     opacity: 0;
-    transform: rotateX(13deg) rotateY(-65deg) rotateZ(11deg)
-      translate(38%, 28%) scale(0.9);
-    clip-path: polygon(0 0, 100% 0, 100% 10%, 0 100%);
-    filter: brightness(0.92);
+    transform: rotateX(10deg) rotateY(-48deg) rotateZ(8.5deg)
+      translate(26%, 20%) scale(0.93);
+    clip-path: polygon(0 0, 100% 0, 100% 0, 24% 100%, 0 100%);
+    filter: brightness(0.9);
   }
 }
 
@@ -249,31 +269,36 @@ onBeforeUnmount(() => {
     clip-path: polygon(0 0, 100% 0, 100% 100%, 0 100%);
     filter: brightness(1);
   }
-  32% {
-    transform: rotateX(0deg) rotateY(8deg) rotateZ(-2.8deg)
-      translate(-0.6%, 2%) scale(0.995);
-    clip-path: polygon(0 0, 100% 0, 100% 100%, 0 80%);
+  22% {
+    transform: rotateX(0deg) rotateY(3deg) rotateZ(-1.1deg)
+      translate(-0.3%, 0.8%) scale(0.998);
+    clip-path: polygon(0 0, 100% 0, 5% 100%, 0 90%);
   }
-  62% {
-    transform: rotateX(5deg) rotateY(24deg) rotateZ(-6deg) translate(-7%, 14%)
-      scale(0.98);
-    clip-path: polygon(0 0, 100% 0, 100% 100%, 0 42%);
+  48% {
+    transform: rotateX(2.4deg) rotateY(11deg) rotateZ(-2.3deg)
+      translate(-2.8%, 4.6%) scale(0.992);
+    clip-path: polygon(0 0, 100% 0, 14% 100%, 0 76%);
+  }
+  74% {
+    transform: rotateX(5.5deg) rotateY(25deg) rotateZ(-4.6deg)
+      translate(-10%, 13.5%) scale(0.975);
+    clip-path: polygon(0 0, 100% 0, 42% 100%, 0 38%);
   }
   100% {
     opacity: 0;
-    transform: rotateX(13deg) rotateY(65deg) rotateZ(-11deg)
-      translate(-38%, 28%) scale(0.9);
-    clip-path: polygon(0 10%, 100% 0, 100% 100%, 0 100%);
-    filter: brightness(0.92);
+    transform: rotateX(10deg) rotateY(48deg) rotateZ(-8.5deg)
+      translate(-26%, 20%) scale(0.93);
+    clip-path: polygon(0 0, 100% 0, 76% 100%, 0 0);
+    filter: brightness(0.9);
   }
 }
 
 @keyframes shadow-fade {
   0% {
-    opacity: 0.1;
+    opacity: 0.02;
   }
-  35% {
-    opacity: 0.48;
+  42% {
+    opacity: 0.52;
   }
   100% {
     opacity: 0;
@@ -285,12 +310,12 @@ onBeforeUnmount(() => {
     opacity: 0;
     transform: rotate(0deg) translate(0, 0);
   }
-  42% {
-    opacity: 0.7;
+  40% {
+    opacity: 0.76;
   }
   100% {
     opacity: 0;
-    transform: rotate(10deg) translate(-8%, -10%);
+    transform: rotate(14deg) translate(-12%, -12%);
   }
 }
 

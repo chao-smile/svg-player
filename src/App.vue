@@ -72,20 +72,20 @@
     </section>
 
     <section class="panel" v-if="segmentAssets.length && imageUrl">
+      <div class="player-panel-head" v-if="currentPage">
+        {{ currentPage.title }}
+      </div>
       <PageFlipList :items="pageItems" :active-index="currentPageIndex">
         <template #default="{ item }">
-          <div class="player-card">
-            <div class="player-card-title">{{ item?.title }}</div>
-            <SvgSequencePlayer
-              :ref="(el) => bindPlayerRef(item?.id, el)"
-              :image-url="item?.imageUrl ?? imageUrl"
-              :segment-assets="item?.segmentAssets ?? segmentAssets"
-              :display-mode="displayMode"
-              :playback-rate="playbackRate"
-              @finished="onPlayerFinished(item?.id)"
-              @state-change="onPlayerStateChange(item?.id, $event)"
-            />
-          </div>
+          <SvgSequencePlayer
+            :ref="(el) => bindPlayerRef(item?.id, el)"
+            :image-url="item?.imageUrl ?? imageUrl"
+            :segment-assets="item?.segmentAssets ?? segmentAssets"
+            :display-mode="displayMode"
+            :playback-rate="playbackRate"
+            @finished="onPlayerFinished(item?.id)"
+            @state-change="onPlayerStateChange(item?.id, $event)"
+          />
         </template>
       </PageFlipList>
     </section>
@@ -368,14 +368,10 @@ watch(
   gap: 10px;
 }
 
-.player-card {
-  display: grid;
-  gap: 10px;
-}
-
-.player-card-title {
+.player-panel-head {
   font-size: 13px;
   color: #6b7280;
+  line-height: 1.4;
 }
 
 .line {

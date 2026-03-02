@@ -106,6 +106,7 @@ import {
 
 const MANIFEST_URL = `${SVG_PLAYER_MANIFEST_URL} (from ${SVG_PLAYER_DATA_ROOT})`;
 
+// Demo 页面状态：加载、错误、当前传给播放器的数据。
 const loading = ref(true);
 const errorText = ref("");
 const manifest = ref<SegmentManifest | null>(null);
@@ -114,6 +115,7 @@ const segmentAssets = ref<SegmentAsset[]>([]);
 
 const playerRef = ref<SvgSequencePlayerExpose | null>(null);
 
+// 仅用于演示控制面板和状态展示，不影响播放器内部逻辑。
 const playerState = ref<PlayerState>("loading");
 const finishedCount = ref(0);
 const finishedAt = ref("");
@@ -136,6 +138,7 @@ async function loadManifest() {
   }
 }
 
+// “开始/停止”按钮：空闲时播放全部，播放中则停止。
 async function handleMainButton() {
   const player = activePlayer.value;
   if (!player) return;
@@ -169,6 +172,7 @@ function handleModeButton() {
   displayMode.value = displayMode.value === "image" ? "text" : "image";
 }
 
+// 由组件抛出的事件回填到 demo 状态栏。
 function onPlayerFinished() {
   finishedCount.value += 1;
   finishedAt.value = new Date().toLocaleTimeString();
@@ -222,6 +226,7 @@ const playerPropsJson = computed(() =>
   JSON.stringify(playerPropsData.value, null, 2),
 );
 
+// 首次进入页面加载 mock 数据，并同步一次组件状态。
 onMounted(async () => {
   await loadManifest();
   await nextTick();

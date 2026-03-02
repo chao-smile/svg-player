@@ -165,6 +165,7 @@ const emit = defineEmits<{
   (e: "state-change", state: PlayerState): void;
 }>();
 
+// 播放器核心状态：分段模型、当前分段、高亮进度、文本容器滚动状态。
 const playerState = ref<PlayerState>("loading");
 const errorText = ref("");
 const imageWidth = ref(0);
@@ -246,6 +247,7 @@ function tick() {
 
   const tMs = audio.currentTime * 1000;
   currentTimeMs.value = tMs;
+  // 按当前音频时间推进每一行 run 的高亮进度，保证只增不减。
   for (const run of active.runs) {
     const next = computeRunProgress(run, tMs);
     const prev = runProgress[run.id] ?? 0;
@@ -314,6 +316,7 @@ async function playSegment(index: number, token: number): Promise<boolean> {
     if (token !== sequenceToken) return false;
     applyPlaybackRate(effectivePlaybackRate.value);
 
+    // RAF 驱动视觉更新，避免只靠 audio 事件导致更新不连续。
     stopRaf();
     raf = requestAnimationFrame(tick);
   } catch (e) {
@@ -351,6 +354,7 @@ function stopInternal(setIdleState = true) {
   if (setIdleState) setState(errorText.value ? "error" : "idle");
 }
 
+// 串行播放全部 segments；若 token 变化说明被中断，立即退出。
 async function playAll() {
   if (
     !segments.value.length ||
@@ -417,6 +421,7 @@ async function loadModels() {
   setState("loading");
   errorText.value = "";
   try {
+    // 将 OCR/TTS 原始数据归一化为可渲染的运行模型。
     const loaded = await loadSegmentModels(props.segmentAssets);
     imageWidth.value = loaded.imageWidth;
     imageHeight.value = loaded.imageHeight;
@@ -569,6 +574,7 @@ const activeTextLineIndex = computed(() => {
   if (!currentSegmentLines.length) return -1;
 
   const tMs = currentTimeMs.value;
+  // 文本模式下优先匹配“当前时间命中的行”，否则回退到首行/末行。
   const activeCandidates = currentSegmentLines.filter(
     (line) => tMs >= line.t0 && tMs < line.t1,
   );
@@ -638,6 +644,7 @@ function centerActiveTextLine(
     (stageRect.top + stageRect.height / 2);
   const maxTop = Math.max(0, stage.scrollHeight - stage.clientHeight);
   const nextTop = Math.max(0, Math.min(targetTop, maxTop));
+  // 记录程序触发的滚动时间，避免被当作用户手动滚动。
   lastProgrammaticScrollAt = Date.now();
   if (behavior === "auto") {
     if (Math.abs(stage.scrollTop - nextTop) > 0.5) stage.scrollTop = nextTop;
@@ -690,6 +697,7 @@ function handleTextStageScroll() {
 watch(
   () => props.segmentAssets,
   () => {
+    // 数据源变化时重建模型并清空旧播放状态。
     stopInternal(false);
     void loadModels();
   },

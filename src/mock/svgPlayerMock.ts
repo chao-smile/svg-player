@@ -6,9 +6,11 @@ import type {
 } from "../components/svg-sequence-player";
 import manifestJson from "./svg-player/manifest.json";
 
+// 演示数据的单一入口：manifest 描述分段，具体资源来自同目录 mock 文件。
 const manifest = manifestJson as SegmentManifest;
 
 const toMockUrl = (file: string) => new URL(`./svg-player/${file}`, import.meta.url).href;
+// 预加载 OCR/TTS JSON，避免组件运行时再做 URL 拉取。
 const ocrModules = import.meta.glob<OcrJson>("./svg-player/*.ocr.json", {
   eager: true,
   import: "default",
@@ -34,6 +36,7 @@ export const SVG_PLAYER_MANIFEST: SegmentManifest = manifest;
 export const SVG_PLAYER_MANIFEST_URL = toMockUrl("manifest.json");
 export const SVG_PLAYER_IMAGE_URL = toMockUrl(SVG_PLAYER_MANIFEST.image);
 
+// SegmentAsset 是组件真正消费的数据结构：音频 URL + OCR/TTS 对象。
 export const SVG_PLAYER_SEGMENT_ASSETS: SegmentAsset[] = SVG_PLAYER_MANIFEST.segments.map((segment) => ({
   id: segment.id,
   text: segment.text,

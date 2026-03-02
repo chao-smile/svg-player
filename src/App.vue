@@ -19,12 +19,6 @@
         <b>Segments:</b> {{ manifest.segment_count }}
       </div>
       <div class="line">
-        <b>Page Index:</b> {{ currentPageIndex + 1 }} / {{ pageItems.length }}
-      </div>
-      <div class="line" v-if="currentPage">
-        <b>Current Page:</b> {{ currentPage.title }}
-      </div>
-      <div class="line">
         <b>Used Mock Files:</b> {{ SVG_PLAYER_USED_MOCK_FILES.length }}
       </div>
       <div class="line"><b>View Mode:</b> {{ displayModeText }}</div>
@@ -55,13 +49,6 @@
         >
           {{ modeButtonText }}
         </button>
-        <button
-          :disabled="!canLoadNextData"
-          class="secondary"
-          @click="handleNextData"
-        >
-          加载下一页
-        </button>
         <button :disabled="loading" class="secondary" @click="loadManifest">
           重新加载数据
         </button>
@@ -72,22 +59,15 @@
     </section>
 
     <section class="panel" v-if="segmentAssets.length && imageUrl">
-      <div class="player-panel-head" v-if="currentPage">
-        {{ currentPage.title }}
-      </div>
-      <PageFlipList :items="pageItems" :active-index="currentPageIndex">
-        <template #default="{ item }">
-          <SvgSequencePlayer
-            :ref="(el) => bindPlayerRef(item?.id, el)"
-            :image-url="item?.imageUrl ?? imageUrl"
-            :segment-assets="item?.segmentAssets ?? segmentAssets"
-            :display-mode="displayMode"
-            :playback-rate="playbackRate"
-            @finished="onPlayerFinished(item?.id)"
-            @state-change="onPlayerStateChange(item?.id, $event)"
-          />
-        </template>
-      </PageFlipList>
+      <SvgSequencePlayer
+        ref="playerRef"
+        :image-url="imageUrl"
+        :segment-assets="segmentAssets"
+        :display-mode="displayMode"
+        :playback-rate="playbackRate"
+        @finished="onPlayerFinished"
+        @state-change="onPlayerStateChange"
+      />
     </section>
 
     <section class="panel" v-if="manifest">
@@ -102,11 +82,9 @@
 </template>
 
 <script setup lang="ts">
-import { computed, nextTick, reactive, ref, watch } from "vue";
-import PageFlipList from "./components/page-flip-list/index.vue";
+import { computed, nextTick, onMounted, ref } from "vue";
 import { SvgSequencePlayer } from "./components/svg-sequence-player";
 import type {
-  ManifestSegment,
   PlayerState,
   SegmentAsset,
   SegmentManifest,
@@ -123,88 +101,13 @@ import {
 
 const MANIFEST_URL = `${SVG_PLAYER_MANIFEST_URL} (from ${SVG_PLAYER_DATA_ROOT})`;
 
-type PlayerPageItem = {
-  id: string;
-  title: string;
-  manifest: SegmentManifest;
-  imageUrl: string;
-  segmentAssets: SegmentAsset[];
-};
-
-function makePageManifest(segments: ManifestSegment[]): SegmentManifest {
-  return {
-    ...SVG_PLAYER_MANIFEST,
-    segment_count: segments.length,
-    segments,
-  };
-}
-
-const pageItems: PlayerPageItem[] = (() => {
-  const assetById = new Map(
-    (SVG_PLAYER_SEGMENT_ASSETS as SegmentAsset[]).map((asset) => [
-      asset.id,
-      asset,
-    ]),
-  );
-  const PAGE_SIZE = 5;
-  const segmentPages: PlayerPageItem[] = [];
-
-  for (let i = 0; i < SVG_PLAYER_MANIFEST.segments.length; i += PAGE_SIZE) {
-    const chunkSegments = SVG_PLAYER_MANIFEST.segments.slice(i, i + PAGE_SIZE);
-    const chunkAssets = chunkSegments
-      .map((segment) => assetById.get(segment.id))
-      .filter((asset): asset is SegmentAsset => Boolean(asset));
-
-    if (!chunkSegments.length || chunkAssets.length !== chunkSegments.length) {
-      continue;
-    }
-
-    const first = i + 1;
-    const last = i + chunkSegments.length;
-    segmentPages.push({
-      id: `page-${Math.floor(i / PAGE_SIZE) + 1}`,
-      title: `第 ${Math.floor(i / PAGE_SIZE) + 1} 页 · segments ${first}-${last}`,
-      manifest: makePageManifest(chunkSegments),
-      imageUrl: SVG_PLAYER_IMAGE_URL,
-      segmentAssets: chunkAssets,
-    });
-  }
-
-  if (segmentPages.length > 0) return segmentPages;
-
-  const fallback = [
-    {
-      id: "all-segments",
-      title: "全部段落",
-      manifest: SVG_PLAYER_MANIFEST,
-      imageUrl: SVG_PLAYER_IMAGE_URL,
-      segmentAssets: SVG_PLAYER_SEGMENT_ASSETS as SegmentAsset[],
-    },
-  ];
-
-  return fallback;
-})();
-
-if (pageItems.length === 1) {
-  const base = pageItems[0]!;
-  pageItems.push({
-    ...base,
-    id: `${base.id}-copy`,
-    title: `${base.title}（副本）`,
-  });
-}
-
 const loading = ref(true);
 const errorText = ref("");
 const manifest = ref<SegmentManifest | null>(null);
 const imageUrl = ref("");
 const segmentAssets = ref<SegmentAsset[]>([]);
 
-const playerRefs = reactive<Record<string, SvgSequencePlayerExpose | null>>({});
-function bindPlayerRef(id: string | undefined, el: unknown) {
-  if (!id) return;
-  playerRefs[id] = (el as SvgSequencePlayerExpose | null) ?? null;
-}
+const playerRef = ref<SvgSequencePlayerExpose | null>(null);
 
 const playerState = ref<PlayerState>("loading");
 const finishedCount = ref(0);
@@ -212,22 +115,15 @@ const finishedAt = ref("");
 const playbackRateOptions = [1, 1.25, 1.5, 2] as const;
 const playbackRate = ref<number>(playbackRateOptions[0]);
 const displayMode = ref<"image" | "text">("image");
-const currentPageIndex = ref(0);
-
-const currentPage = computed(() => pageItems[currentPageIndex.value] ?? null);
-const activePlayer = computed(() =>
-  currentPage.value ? (playerRefs[currentPage.value.id] ?? null) : null,
-);
+const activePlayer = computed(() => playerRef.value);
 
 async function loadManifest() {
   loading.value = true;
   errorText.value = "";
   try {
-    const page = currentPage.value;
-    if (!page) throw new Error("No page data available");
-    manifest.value = page.manifest;
-    imageUrl.value = page.imageUrl;
-    segmentAssets.value = page.segmentAssets;
+    manifest.value = SVG_PLAYER_MANIFEST;
+    imageUrl.value = SVG_PLAYER_IMAGE_URL;
+    segmentAssets.value = SVG_PLAYER_SEGMENT_ASSETS as SegmentAsset[];
   } catch (e) {
     errorText.value = String((e as Error)?.message ?? e);
   } finally {
@@ -268,21 +164,12 @@ function handleModeButton() {
   displayMode.value = displayMode.value === "image" ? "text" : "image";
 }
 
-function handleNextData() {
-  if (!pageItems.length) return;
-  activePlayer.value?.stop();
-  finishedAt.value = "";
-  currentPageIndex.value = (currentPageIndex.value + 1) % pageItems.length;
-}
-
-function onPlayerFinished(pageId: string | undefined) {
-  if (!pageId || pageId !== currentPage.value?.id) return;
+function onPlayerFinished() {
   finishedCount.value += 1;
   finishedAt.value = new Date().toLocaleTimeString();
 }
 
-function onPlayerStateChange(pageId: string | undefined, state: PlayerState) {
-  if (!pageId || pageId !== currentPage.value?.id) return;
+function onPlayerStateChange(state: PlayerState) {
   playerState.value = state;
 }
 
@@ -310,13 +197,6 @@ const canAdjustRate = computed(
 const canToggleMode = computed(
   () => !loading.value && !errorText.value && segmentAssets.value.length > 0,
 );
-const canLoadNextData = computed(
-  () =>
-    !loading.value &&
-    !errorText.value &&
-    pageItems.length > 1 &&
-    playerState.value !== "playing",
-);
 const pauseText = computed(() =>
   playerState.value === "paused" ? "继续" : "暂停",
 );
@@ -328,16 +208,11 @@ const displayModeText = computed(() =>
   displayMode.value === "image" ? "图文播放" : "纯文字播放",
 );
 
-watch(
-  currentPageIndex,
-  async () => {
-    void loadManifest();
-    playerState.value = "loading";
-    await nextTick();
-    playerState.value = activePlayer.value?.getState() ?? "idle";
-  },
-  { immediate: true },
-);
+onMounted(async () => {
+  await loadManifest();
+  await nextTick();
+  playerState.value = activePlayer.value?.getState() ?? "idle";
+});
 </script>
 
 <style scoped>
@@ -366,12 +241,6 @@ watch(
   padding: 14px;
   display: grid;
   gap: 10px;
-}
-
-.player-panel-head {
-  font-size: 13px;
-  color: #6b7280;
-  line-height: 1.4;
 }
 
 .line {

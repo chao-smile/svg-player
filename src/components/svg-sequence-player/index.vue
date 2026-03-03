@@ -675,6 +675,7 @@ function handleTextStageScroll() {
   handleTextStageUserInteraction();
 }
 
+// 监听分段资源变化：重新加载模型并重置当前播放进度。
 watch(
   () => props.segmentAssets,
   () => {
@@ -685,6 +686,7 @@ watch(
   { immediate: true },
 );
 
+// 监听外部倍速变化：实时同步到底层 audio 对象。
 watch(
   effectivePlaybackRate,
   (rate) => {
@@ -693,12 +695,14 @@ watch(
   { immediate: true },
 );
 
+// 监听当前高亮行：在文本模式下自动将活跃行滚动到视觉中心。
 watch(activeTextLineIndex, () => {
   void nextTick(() => {
     centerActiveTextLine("smooth");
   });
 });
 
+// 监听显示模式切换：进入文本模式时立即对齐到当前播放行。
 watch(displayMode, (mode) => {
   window.clearTimeout(textAutoFollowResumeTimer);
   textAutoFollowAllowed.value = true;
@@ -708,6 +712,7 @@ watch(displayMode, (mode) => {
   });
 });
 
+// 监听自动跟随开关：关闭时停止自动滚动，开启时立即恢复跟随。
 watch(
   () => props.autoFollowText,
   (enabled) => {
@@ -722,10 +727,12 @@ watch(
   { immediate: true },
 );
 
+// 监听文本容器引用：挂载/切换后重新绑定 ResizeObserver。
 watch(textStageRef, () => {
   bindTextStageObserver();
 });
 
+// 监听文本行集合变化：重新计算并对齐当前活跃行位置。
 watch(textLines, () => {
   void nextTick(() => {
     centerActiveTextLine("auto", true);

@@ -112,9 +112,9 @@ import {
   nextTick,
   onBeforeUnmount,
   onMounted,
+  onUpdated,
   reactive,
   ref,
-  watch,
 } from "vue";
 import { computeRunProgress, expandBox, loadSegmentModels } from "./model";
 import type {
@@ -177,6 +177,7 @@ const textStageRef = ref<HTMLElement | null>(null);
 const textLineEls = new Map<string, HTMLElement>();
 const textStageHeight = ref(0);
 let textStageResizeObserver: ResizeObserver | null = null;
+let observedTextStageEl: HTMLElement | null = null;
 const textAutoFollowAllowed = ref(true);
 let textAutoFollowResumeTimer = 0;
 let lastProgrammaticScrollAt = 0;
@@ -188,6 +189,12 @@ let sequenceToken = 0;
 let resolveSegment: ((ok: boolean) => void) | null = null;
 let cleanupSegmentListeners: (() => void) | null = null;
 let lastRenderedSegmentIndex = -1;
+// 下面这组快照值用于“显式对比”，替代 watch 依赖收集机制。
+let prevSegmentAssetsRef: SegmentAsset[] | null = null;
+let prevImageUrl = "";
+let prevPlaybackRate = NaN;
+let prevDisplayMode: DisplayMode | null = null;
+let prevAutoFollowText: boolean | null = null;
 
 function setState(next: PlayerState) {
   if (playerState.value === next) return;
@@ -447,6 +454,9 @@ async function loadModels() {
     segments.value = loaded.segments;
     resetAllProgress();
     setState("idle");
+    void nextTick(() => {
+      centerActiveTextLine("auto", true);
+    });
   } catch (e) {
     errorText.value = String((e as Error)?.message ?? e);
     setState("error");
@@ -695,79 +705,84 @@ function handleTextStageScroll() {
   handleTextStageUserInteraction();
 }
 
-// 监听分段资源或底图变化：重新加载模型并重置当前播放进度。
-watch(
-  () => [props.segmentAssets, props.imageUrl],
-  () => {
-    // 数据源变化时重建模型并清空旧播放状态。
-    stopInternal(false);
-    void loadModels();
-  },
-  { immediate: true },
-);
-
-// 监听外部倍速变化：实时同步到底层 audio 对象。
-watch(
-  effectivePlaybackRate,
-  (rate) => {
-    applyPlaybackRate(rate);
-  },
-  { immediate: true },
-);
-
-// 监听当前高亮行：在文本模式下自动将活跃行滚动到视觉中心。
-watch(activeTextLineIndex, () => {
-  void nextTick(() => {
-    centerActiveTextLine("smooth");
-  });
-});
-
-// 监听显示模式切换：进入文本模式时立即对齐到当前播放行。
-watch(displayMode, (mode) => {
+// 模式同步：进入文本模式时重置自动跟随状态并立即对齐到当前行。
+function syncDisplayMode(force = false) {
+  const mode = displayMode.value;
+  if (!force && mode === prevDisplayMode) return;
+  prevDisplayMode = mode;
   window.clearTimeout(textAutoFollowResumeTimer);
   textAutoFollowAllowed.value = true;
   if (mode !== "text") return;
   void nextTick(() => {
     centerActiveTextLine("auto", true);
   });
-});
+}
 
-// 监听自动跟随开关：关闭时停止自动滚动，开启时立即恢复跟随。
-watch(
-  () => props.autoFollowText,
-  (enabled) => {
-    if (!enabled) {
-      window.clearTimeout(textAutoFollowResumeTimer);
-      textAutoFollowAllowed.value = false;
-      return;
-    }
-    textAutoFollowAllowed.value = true;
-    centerActiveTextLine("smooth", true);
-  },
-  { immediate: true },
-);
+// 自动跟随开关同步：显式控制是否允许程序滚动文本窗口。
+function syncAutoFollow(force = false) {
+  const enabled = Boolean(props.autoFollowText);
+  if (!force && enabled === prevAutoFollowText) return;
+  prevAutoFollowText = enabled;
+  if (!enabled) {
+    window.clearTimeout(textAutoFollowResumeTimer);
+    textAutoFollowAllowed.value = false;
+    return;
+  }
+  textAutoFollowAllowed.value = true;
+  centerActiveTextLine("smooth", true);
+}
 
-// 监听文本容器引用：挂载/切换后重新绑定 ResizeObserver。
-watch(textStageRef, () => {
+// 文本容器引用同步：DOM 节点变化时重绑 observer，避免监听过期节点。
+function syncTextStageObserver(force = false) {
+  const stage = textStageRef.value;
+  if (!force && stage === observedTextStageEl) return;
+  observedTextStageEl = stage;
   bindTextStageObserver();
-});
+}
 
-// 监听文本行集合变化：重新计算并对齐当前活跃行位置。
-watch(textLines, () => {
-  void nextTick(() => {
-    centerActiveTextLine("auto", true);
-  });
-});
+// 倍速同步：仅当外部倍速实际变更时写入 audio，避免重复赋值。
+function syncPlaybackRate(force = false) {
+  const rate = effectivePlaybackRate.value;
+  if (!force && rate === prevPlaybackRate) return;
+  prevPlaybackRate = rate;
+  applyPlaybackRate(rate);
+}
 
+// 数据源同步：segment 或 image 变化时重建模型，数据流入口集中在这里。
+function syncSegmentSource(force = false) {
+  const assetsChanged = prevSegmentAssetsRef !== props.segmentAssets;
+  const imageChanged = prevImageUrl !== props.imageUrl;
+  if (!force && !assetsChanged && !imageChanged) return;
+  prevSegmentAssetsRef = props.segmentAssets;
+  prevImageUrl = props.imageUrl;
+  stopInternal(false);
+  void loadModels();
+}
+
+// 首次挂载：强制跑一轮全量同步，初始化播放器可用状态。
 onMounted(() => {
-  bindTextStageObserver();
+  syncSegmentSource(true);
+  syncPlaybackRate(true);
+  syncDisplayMode(true);
+  syncAutoFollow(true);
+  syncTextStageObserver(true);
   emit("state-change", playerState.value);
+});
+
+// 每次组件更新后执行“显式同步调度”，按需触发副作用（无 watch）。
+onUpdated(() => {
+  syncSegmentSource();
+  syncPlaybackRate();
+  syncDisplayMode();
+  syncAutoFollow();
+  syncTextStageObserver();
 });
 
 onBeforeUnmount(() => {
   window.clearTimeout(textAutoFollowResumeTimer);
   textStageResizeObserver?.disconnect();
   textStageResizeObserver = null;
+  observedTextStageEl = null;
   stopInternal(false);
 });
 

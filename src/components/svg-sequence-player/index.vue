@@ -416,14 +416,34 @@ function stop() {
   stopInternal(true);
 }
 
+function resolveImageSize(url: string): Promise<{ width: number; height: number }> {
+  const src = url.trim();
+  if (!src) return Promise.resolve({ width: 0, height: 0 });
+  return new Promise((resolve) => {
+    const img = new Image();
+    img.onload = () => {
+      resolve({
+        width: img.naturalWidth || img.width || 0,
+        height: img.naturalHeight || img.height || 0,
+      });
+    };
+    img.onerror = () => resolve({ width: 0, height: 0 });
+    img.src = src;
+  });
+}
+
 async function loadModels() {
   setState("loading");
   errorText.value = "";
   try {
+    const imageMeta = await resolveImageSize(props.imageUrl);
     // 将 OCR/TTS 原始数据归一化为可渲染的运行模型。
-    const loaded = await loadSegmentModels(props.segmentAssets);
-    imageWidth.value = loaded.imageWidth;
-    imageHeight.value = loaded.imageHeight;
+    const loaded = await loadSegmentModels(props.segmentAssets, {
+      imageWidth: imageMeta.width,
+      imageHeight: imageMeta.height,
+    });
+    imageWidth.value = loaded.imageWidth || imageMeta.width;
+    imageHeight.value = loaded.imageHeight || imageMeta.height;
     segments.value = loaded.segments;
     resetAllProgress();
     setState("idle");
@@ -675,9 +695,9 @@ function handleTextStageScroll() {
   handleTextStageUserInteraction();
 }
 
-// 监听分段资源变化：重新加载模型并重置当前播放进度。
+// 监听分段资源或底图变化：重新加载模型并重置当前播放进度。
 watch(
-  () => props.segmentAssets,
+  () => [props.segmentAssets, props.imageUrl],
   () => {
     // 数据源变化时重建模型并清空旧播放状态。
     stopInternal(false);

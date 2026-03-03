@@ -85,11 +85,17 @@ export type SegmentModel = {
   runs: RunModel[];
 };
 
+export type SegmentOcrTtsWord = {
+  text: string;
+  rotated_rect: RotatedRect | number[];
+  begin_time: number | string;
+  end_time: number | string;
+};
+
 export type SegmentAsset = {
-  id: string;
-  audioUrl: string;
-  ocr: OcrJson | Record<string, unknown>;
-  tts: TtsJson | Record<string, unknown>;
+  id?: string;
+  audio_url: string;
+  ocr_tts: SegmentOcrTtsWord[];
   text: string;
 };
 

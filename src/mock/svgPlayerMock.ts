@@ -29,6 +29,21 @@ function readMockJson<T>(modules: Record<string, T>, file: string, type: "ocr" |
   return data;
 }
 
+function mergeOcrTts(ocr: OcrJson, tts: TtsJson): SegmentAsset["ocr_tts"] {
+  const subtitles = tts.payload?.subtitles ?? [];
+  return ocr.data.words.map((word, index) => {
+    const token = subtitles[index];
+    const begin = Number(token?.begin_time ?? 0);
+    const end = Number(token?.end_time ?? begin);
+    return {
+      text: String(word.text ?? token?.text ?? ""),
+      rotated_rect: word.rotated_rect,
+      begin_time: begin,
+      end_time: end,
+    };
+  });
+}
+
 export const SVG_PLAYER_DATA_ROOT = "src/mock/svg-player";
 
 export const SVG_PLAYER_MANIFEST: SegmentManifest = manifest;
@@ -36,13 +51,15 @@ export const SVG_PLAYER_MANIFEST: SegmentManifest = manifest;
 export const SVG_PLAYER_MANIFEST_URL = toMockUrl("manifest.json");
 export const SVG_PLAYER_IMAGE_URL = toMockUrl(SVG_PLAYER_MANIFEST.image);
 
-// SegmentAsset 是组件真正消费的数据结构：音频 URL + OCR/TTS 对象。
+// SegmentAsset 是组件真正消费的数据结构：音频 URL + ocr_tts 单词时序数组。
 export const SVG_PLAYER_SEGMENT_ASSETS: SegmentAsset[] = SVG_PLAYER_MANIFEST.segments.map((segment) => ({
   id: segment.id,
   text: segment.text,
-  audioUrl: toMockUrl(segment.audio),
-  ocr: readMockJson(ocrModules, segment.ocr, "ocr"),
-  tts: readMockJson(ttsModules, segment.tts, "tts"),
+  audio_url: toMockUrl(segment.audio),
+  ocr_tts: mergeOcrTts(
+    readMockJson(ocrModules, segment.ocr, "ocr"),
+    readMockJson(ttsModules, segment.tts, "tts"),
+  ),
 }));
 
 export const SVG_PLAYER_USED_MOCK_FILES = [

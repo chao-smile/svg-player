@@ -1,11 +1,9 @@
 import type {
   BBox,
-  OcrJson,
-  OcrWordRaw,
   RunModel,
   SegmentAsset,
+  SegmentOcrTtsWord,
   SegmentModel,
-  TtsJson,
   WordModel,
 } from "./types";
 
@@ -64,81 +62,69 @@ function clusterRuns(words: WordModel[], imageWidth: number): WordModel[][] {
   return all;
 }
 
-function isObject(value: unknown): value is Record<string, unknown> {
-  return Boolean(value) && typeof value === "object";
-}
-
-function normalizeOcr(raw: SegmentAsset["ocr"]): OcrJson {
-  if (!isObject(raw)) throw new Error("ocr is invalid");
-  const rawObj = raw as Record<string, unknown>;
-  const data = isObject(rawObj.data) ? rawObj.data : rawObj;
-  const width = Number(data.width);
-  const height = Number(data.height);
-  const words = data.words;
-
-  if (
-    !Number.isFinite(width) ||
-    !Number.isFinite(height) ||
-    !Array.isArray(words)
-  ) {
-    throw new Error("ocr shape is invalid");
+function toFiniteNumber(value: unknown, fallback = 0): number {
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  if (typeof value === "string") {
+    const n = Number(value);
+    if (Number.isFinite(n)) return n;
   }
-
-  return {
-    code: Number(rawObj.code ?? 200),
-    data: {
-      width,
-      height,
-      words: words as OcrWordRaw[],
-    },
-  };
+  return fallback;
 }
 
-function normalizeTts(raw: SegmentAsset["tts"]): TtsJson {
-  if (!isObject(raw)) throw new Error("tts is invalid");
-  const rawObj = raw as Record<string, unknown>;
-  const payload = isObject(rawObj.payload) ? rawObj.payload : rawObj;
-  const subtitles = payload.subtitles;
-  if (!Array.isArray(subtitles)) {
-    throw new Error("tts shape is invalid");
-  }
-  return {
-    header: isObject(rawObj.header) ? rawObj.header : {},
-    payload: { subtitles },
-  };
-}
-
-function wordRect(word: OcrWordRaw): [number, number, number, number] {
+function parseWordRect(word: SegmentOcrTtsWord): [number, number, number, number] {
   if (Array.isArray(word.rotated_rect) && word.rotated_rect.length >= 4) {
-    const [x, y, w, h] = word.rotated_rect;
+    const x = toFiniteNumber(word.rotated_rect[0], 0);
+    const y = toFiniteNumber(word.rotated_rect[1], 0);
+    const w = Math.max(1, toFiniteNumber(word.rotated_rect[2], 1));
+    const h = Math.max(1, toFiniteNumber(word.rotated_rect[3], 1));
     return [x, y, w, h];
   }
   return [0, 0, 1, 1];
 }
 
-function buildWords(ocr: OcrJson): WordModel[] {
-  return ocr.data.words.map((word, idx) => {
-    const [x, y, w, h] = wordRect(word);
-    // Backend ocr points are center-based.
+function buildWords(alignedWords: SegmentOcrTtsWord[]): WordModel[] {
+  return alignedWords.map((word, idx) => {
+    const [x, y, w, h] = parseWordRect(word);
+    const t0 = toFiniteNumber(word.begin_time, NaN);
+    const t1 = toFiniteNumber(word.end_time, NaN);
     return {
       id: `word-${idx}`,
       idx,
       text: word.text ?? "",
+      // OCR rotated_rect is center-based.
       bbox: { x: x - w / 2, y: y - h / 2, w, h },
+      t0: Number.isFinite(t0) ? t0 : undefined,
+      t1: Number.isFinite(t1) ? t1 : undefined,
     };
   });
 }
 
-function attachTokenTiming(words: WordModel[], tts: TtsJson) {
-  const subs = tts.payload?.subtitles ?? [];
-  for (const token of subs) {
-    const idx = token.begin_index;
-    if (typeof idx !== "number" || idx < 0 || idx >= words.length) continue;
-    const word = words[idx];
-    if (!word) continue;
-    word.t0 = typeof word.t0 === "number" ? Math.min(word.t0, token.begin_time) : token.begin_time;
-    word.t1 = typeof word.t1 === "number" ? Math.max(word.t1, token.end_time) : token.end_time;
+function inferImageSize(words: WordModel[]): { width: number; height: number } {
+  const right = Math.max(...words.map((w) => w.bbox.x + w.bbox.w), 1);
+  const bottom = Math.max(...words.map((w) => w.bbox.y + w.bbox.h), 1);
+  return {
+    width: Math.max(1, Math.ceil(right + 2)),
+    height: Math.max(1, Math.ceil(bottom + 2)),
+  };
+}
+
+function normalizeSegmentAsset(asset: SegmentAsset, index: number) {
+  if (!asset || typeof asset !== "object") {
+    throw new Error(`segmentAssets[${index}] is invalid`);
   }
+  if (!Array.isArray(asset.ocr_tts) || asset.ocr_tts.length === 0) {
+    throw new Error(`segmentAssets[${index}].ocr_tts is invalid`);
+  }
+  const audioUrl = String(asset.audio_url ?? "").trim();
+  if (!audioUrl) {
+    throw new Error(`segmentAssets[${index}].audio_url is empty`);
+  }
+  return {
+    id: String(asset.id ?? `segment-${index + 1}`),
+    audioUrl,
+    text: String(asset.text ?? ""),
+    ocrTts: asset.ocr_tts,
+  };
 }
 
 function timeRange(words: WordModel[]) {
@@ -150,37 +136,44 @@ function timeRange(words: WordModel[]) {
   };
 }
 
-export async function loadSegmentModels(segmentAssets: SegmentAsset[]): Promise<{ imageWidth: number; imageHeight: number; segments: SegmentModel[] }> {
-  const loaded = segmentAssets.map((asset) => {
-    const ocr = normalizeOcr(asset.ocr);
-    const tts = normalizeTts(asset.tts);
+export async function loadSegmentModels(
+  segmentAssets: SegmentAsset[],
+  options?: { imageWidth?: number; imageHeight?: number },
+): Promise<{ imageWidth: number; imageHeight: number; segments: SegmentModel[] }> {
+  let imageWidth = Math.max(0, toFiniteNumber(options?.imageWidth, 0));
+  let imageHeight = Math.max(0, toFiniteNumber(options?.imageHeight, 0));
 
-    const words = buildWords(ocr);
-    attachTokenTiming(words, tts);
+  const loaded = segmentAssets.map((asset, index) => {
+    const normalized = normalizeSegmentAsset(asset, index);
+    const words = buildWords(normalized.ocrTts);
+    const inferred = inferImageSize(words);
+    const clusterWidth = imageWidth > 0 ? imageWidth : inferred.width;
 
-    const runs: RunModel[] = clusterRuns(words, ocr.data.width).map((line, i) => ({
-      id: `${asset.id}-run-${i + 1}`,
+    const runs: RunModel[] = clusterRuns(words, clusterWidth).map((line, i) => ({
+      id: `${normalized.id}-run-${i + 1}`,
       bbox: unionBBox(line),
       words: line,
     }));
 
     const range = timeRange(words);
     const segment: SegmentModel = {
-      id: asset.id,
-      audioUrl: asset.audioUrl,
-      text: asset.text,
+      id: normalized.id,
+      audioUrl: normalized.audioUrl,
+      text: normalized.text,
       t0: range.t0,
       t1: range.t1,
       runs,
     };
 
-    return { segment, imageWidth: ocr.data.width, imageHeight: ocr.data.height };
+    if (imageWidth <= 0) imageWidth = Math.max(imageWidth, inferred.width);
+    if (imageHeight <= 0) imageHeight = Math.max(imageHeight, inferred.height);
+    return segment;
   });
 
   return {
-    imageWidth: loaded[0]?.imageWidth ?? 0,
-    imageHeight: loaded[0]?.imageHeight ?? 0,
-    segments: loaded.map((item) => item.segment),
+    imageWidth,
+    imageHeight,
+    segments: loaded,
   };
 }
 

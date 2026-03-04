@@ -4,9 +4,11 @@ import type {
   SegmentAsset,
   SegmentOcrTtsWord,
   SegmentModel,
+  TimedWordModel,
   WordModel,
 } from "./types";
 
+// 计算一组词包围盒并集，得到整行矩形区域。
 function unionBBox(words: WordModel[]): BBox {
   const x0 = Math.min(...words.map((w) => w.bbox.x));
   const y0 = Math.min(...words.map((w) => w.bbox.y));
@@ -15,6 +17,7 @@ function unionBBox(words: WordModel[]): BBox {
   return { x: x0, y: y0, w: Math.max(1, x1 - x0), h: Math.max(1, y1 - y0) };
 }
 
+// 对行矩形做适度扩展，避免高亮视觉过于贴边。
 export function expandBox(box: BBox): BBox {
   const padX = Math.max(1, Math.round(box.h * 0.06));
   const topExpand = Math.max(1, Math.round(box.h * 0.1));
@@ -27,6 +30,7 @@ export function expandBox(box: BBox): BBox {
   };
 }
 
+// 按布局位置把词聚合为行（run）：先分左右列，再按 y 轴近邻聚类。
 function clusterRuns(words: WordModel[], imageWidth: number): WordModel[][] {
   const left = words.filter((w) => w.bbox.x < imageWidth * 0.55);
   const right = words.filter((w) => w.bbox.x >= imageWidth * 0.55);
@@ -62,6 +66,7 @@ function clusterRuns(words: WordModel[], imageWidth: number): WordModel[][] {
   return all;
 }
 
+// 将 unknown 安全转换为有限数字，失败时回退 fallback。
 function toFiniteNumber(value: unknown, fallback = 0): number {
   if (typeof value === "number" && Number.isFinite(value)) return value;
   if (typeof value === "string") {
@@ -71,6 +76,7 @@ function toFiniteNumber(value: unknown, fallback = 0): number {
   return fallback;
 }
 
+// 读取 OCR 词框 rotated_rect，统一返回 [x, y, w, h]。
 function parseWordRect(word: SegmentOcrTtsWord): [number, number, number, number] {
   if (Array.isArray(word.rotated_rect) && word.rotated_rect.length >= 4) {
     const x = toFiniteNumber(word.rotated_rect[0], 0);
@@ -82,6 +88,7 @@ function parseWordRect(word: SegmentOcrTtsWord): [number, number, number, number
   return [0, 0, 1, 1];
 }
 
+// 把输入 ocr_tts 列表映射为内部词模型（含可选时间戳）。
 function buildWords(alignedWords: SegmentOcrTtsWord[]): WordModel[] {
   return alignedWords.map((word, idx) => {
     const [x, y, w, h] = parseWordRect(word);
@@ -99,6 +106,7 @@ function buildWords(alignedWords: SegmentOcrTtsWord[]): WordModel[] {
   });
 }
 
+// 当缺少外部尺寸时，根据词框推导最小可用画布大小。
 function inferImageSize(words: WordModel[]): { width: number; height: number } {
   const right = Math.max(...words.map((w) => w.bbox.x + w.bbox.w), 1);
   const bottom = Math.max(...words.map((w) => w.bbox.y + w.bbox.h), 1);
@@ -108,6 +116,7 @@ function inferImageSize(words: WordModel[]): { width: number; height: number } {
   };
 }
 
+// 校验并标准化单个 segment 资源结构。
 function normalizeSegmentAsset(asset: SegmentAsset, index: number) {
   if (!asset || typeof asset !== "object") {
     throw new Error(`segmentAssets[${index}] is invalid`);
@@ -127,8 +136,12 @@ function normalizeSegmentAsset(asset: SegmentAsset, index: number) {
   };
 }
 
+// 计算一段词的整体时间范围（毫秒）。
 function timeRange(words: WordModel[]) {
-  const timed = words.filter((w): w is WordModel & { t0: number; t1: number } => typeof w.t0 === "number" && typeof w.t1 === "number");
+  const timed = words.filter(
+    (w): w is TimedWordModel =>
+      typeof w.t0 === "number" && typeof w.t1 === "number",
+  );
   if (!timed.length) return { t0: 0, t1: 0 };
   return {
     t0: Math.min(...timed.map((w) => w.t0)),
@@ -136,6 +149,7 @@ function timeRange(words: WordModel[]) {
   };
 }
 
+// 解析并归一化所有 segmentAssets，构建播放器运行时模型。
 export async function loadSegmentModels(
   segmentAssets: SegmentAsset[],
   options?: { imageWidth?: number; imageHeight?: number },
@@ -149,11 +163,22 @@ export async function loadSegmentModels(
     const inferred = inferImageSize(words);
     const clusterWidth = imageWidth > 0 ? imageWidth : inferred.width;
 
-    const runs: RunModel[] = clusterRuns(words, clusterWidth).map((line, i) => ({
-      id: `${normalized.id}-run-${i + 1}`,
-      bbox: unionBBox(line),
-      words: line,
-    }));
+    const runs: RunModel[] = clusterRuns(words, clusterWidth).map((line, i) => {
+      const bbox = unionBBox(line);
+      const timedWords = line
+        .filter(
+          (word): word is TimedWordModel =>
+            typeof word.t0 === "number" && typeof word.t1 === "number",
+        )
+        .sort((a, b) => a.t0 - b.t0);
+      return {
+        id: `${normalized.id}-run-${i + 1}`,
+        bbox,
+        expandedBBox: expandBox(bbox),
+        words: line,
+        timedWords,
+      };
+    });
 
     const range = timeRange(words);
     const segment: SegmentModel = {
@@ -177,10 +202,9 @@ export async function loadSegmentModels(
   };
 }
 
+// 计算某个 run 在时刻 tMs 的高亮填充进度（0~1）。
 export function computeRunProgress(run: RunModel, tMs: number): number {
-  const timed = run.words
-    .filter((w): w is WordModel & { t0: number; t1: number } => typeof w.t0 === "number" && typeof w.t1 === "number")
-    .sort((a, b) => a.t0 - b.t0);
+  const timed = run.timedWords;
 
   if (!timed.length) return 0;
   if (tMs <= timed[0]!.t0) return 0;

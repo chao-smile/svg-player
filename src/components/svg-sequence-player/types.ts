@@ -70,10 +70,17 @@ export type WordModel = {
   t1?: number;
 };
 
+export type TimedWordModel = WordModel & {
+  t0: number;
+  t1: number;
+};
+
 export type RunModel = {
   id: string;
   bbox: BBox;
+  expandedBBox: BBox;
   words: WordModel[];
+  timedWords: TimedWordModel[];
 };
 
 export type SegmentModel = {

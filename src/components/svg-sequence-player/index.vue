@@ -36,15 +36,15 @@
               clipPathUnits="userSpaceOnUse"
             >
               <rect
-                :x="expandBox(run.bbox).x"
-                :y="expandBox(run.bbox).y"
+                :x="run.expandedBBox.x"
+                :y="run.expandedBBox.y"
                 :width="
-                  expandBox(run.bbox).w *
-                  (segment.id === activeSegmentId()
+                  run.expandedBBox.w *
+                  (segment.id === activeSegmentIdValue
                     ? (runProgress[run.id] ?? 0)
                     : 0)
                 "
-                :height="expandBox(run.bbox).h"
+                :height="run.expandedBBox.h"
                 :rx="highlightRadius"
                 :ry="highlightRadius"
               />
@@ -57,20 +57,20 @@
             <rect
               v-if="props.showOutline"
               class="base"
-              :class="{ active: segment.id === activeSegmentId() }"
-              :x="expandBox(run.bbox).x"
-              :y="expandBox(run.bbox).y"
-              :width="expandBox(run.bbox).w"
-              :height="expandBox(run.bbox).h"
+              :class="{ active: segment.id === activeSegmentIdValue }"
+              :x="run.expandedBBox.x"
+              :y="run.expandedBBox.y"
+              :width="run.expandedBBox.w"
+              :height="run.expandedBBox.h"
               :rx="highlightRadius"
               :ry="highlightRadius"
             />
             <rect
               class="fill"
-              :x="expandBox(run.bbox).x"
-              :y="expandBox(run.bbox).y"
-              :width="expandBox(run.bbox).w"
-              :height="expandBox(run.bbox).h"
+              :x="run.expandedBBox.x"
+              :y="run.expandedBBox.y"
+              :width="run.expandedBBox.w"
+              :height="run.expandedBBox.h"
               :clip-path="`url(#clip-${run.id})`"
               :rx="highlightRadius"
               :ry="highlightRadius"
@@ -116,7 +116,7 @@ import {
   reactive,
   ref,
 } from "vue";
-import { computeRunProgress, expandBox, loadSegmentModels } from "./model";
+import { computeRunProgress, loadSegmentModels } from "./model";
 import type {
   PlayerState,
   RunModel,
@@ -136,6 +136,7 @@ type TextLineModel = {
   t1: number;
 };
 
+// 组件入参：图片地址、分段资源与播放器外观/行为配置。
 const props = withDefaults(
   defineProps<{
     imageUrl: string;
@@ -161,41 +162,68 @@ const props = withDefaults(
   },
 );
 
+// 对外事件：播放完成与内部状态变化。
 const emit = defineEmits<{
   (e: "finished"): void;
   (e: "state-change", state: PlayerState): void;
 }>();
 
-// 播放器核心状态：分段模型、当前分段、高亮进度、文本容器滚动状态。
+// 播放器当前状态（loading/idle/playing/paused/error）。
 const playerState = ref<PlayerState>("loading");
+// 错误文本：模型加载或播放失败时展示。
 const errorText = ref("");
+// 图片坐标系宽度（用于 SVG overlay viewBox）。
 const imageWidth = ref(0);
+// 图片坐标系高度（用于 SVG overlay viewBox）。
 const imageHeight = ref(0);
+// 归一化后的分段模型数组。
 const segments = ref<SegmentModel[]>([]);
+// 当前活跃分段索引，-1 表示无活跃分段。
 const currentSegmentIndex = ref<number>(-1);
+// 当前播放时间（毫秒）。
 const currentTimeMs = ref(0);
+// 每个 run 的高亮进度缓存（0~1）。
 const runProgress = reactive<Record<string, number>>({});
+// 文本模式滚动容器引用。
 const textStageRef = ref<HTMLElement | null>(null);
+// 文本行 DOM 索引（line.id -> HTMLElement）。
 const textLineEls = new Map<string, HTMLElement>();
+// 文本容器高度缓存，用于顶部/底部 spacer 计算。
 const textStageHeight = ref(0);
+// 文本容器 ResizeObserver 实例。
 let textStageResizeObserver: ResizeObserver | null = null;
+// 当前被观察的文本容器节点，用于避免重复绑定 observer。
 let observedTextStageEl: HTMLElement | null = null;
+// 是否允许自动跟随文本到激活行。
 const textAutoFollowAllowed = ref(true);
+// 自动跟随恢复定时器 id。
 let textAutoFollowResumeTimer = 0;
+// 最近一次程序触发滚动的时间戳（用于区分用户滚动）。
 let lastProgrammaticScrollAt = 0;
 
+// 全局复用的底层音频实例。
 const audio = new Audio();
+// requestAnimationFrame 句柄。
 let raf = 0;
+// 当前分段停止时间（毫秒）。
 let stopAtMs: number | null = null;
+// 播放流程令牌：用于中断旧异步流程。
 let sequenceToken = 0;
+// 当前分段播放 Promise 的 resolve 回调。
 let resolveSegment: ((ok: boolean) => void) | null = null;
+// 当前分段事件监听清理函数。
 let cleanupSegmentListeners: (() => void) | null = null;
+// 上一次渲染的分段索引。
 let lastRenderedSegmentIndex = -1;
-// 下面这组快照值用于“显式对比”，替代 watch 依赖收集机制。
+// 上一次 segmentAssets 引用快照（用于显式对比更新）。
 let prevSegmentAssetsRef: SegmentAsset[] | null = null;
+// 上一次 imageUrl 快照（用于显式对比更新）。
 let prevImageUrl = "";
+// 上一次倍速快照（避免重复写入 audio.playbackRate）。
 let prevPlaybackRate = NaN;
+// 上一次展示模式快照（用于模式切换副作用控制）。
 let prevDisplayMode: DisplayMode | null = null;
+// 上一次自动跟随开关快照。
 let prevAutoFollowText: boolean | null = null;
 
 // 更新并广播播放器状态，避免重复派发相同状态。
@@ -251,6 +279,8 @@ function activeSegmentId() {
   if (idx < 0 || idx >= segments.value.length) return null;
   return segments.value[idx]?.id ?? null;
 }
+// 活跃分段 id 的计算结果缓存，减少模板重复调用函数。
+const activeSegmentIdValue = computed(() => activeSegmentId());
 
 // 播放中的逐帧主循环：推进高亮进度并处理分段结束。
 function tick() {
@@ -495,25 +525,31 @@ async function loadModels() {
   }
 }
 
+// 主题变量：提供给样式层的高亮色与圆角参数。
 const themeVars = computed(() => ({
   "--hl-color": props.highlightColor,
   "--hl-soft-color": toSoftColor(props.highlightColor, 0.56),
   "--seg-radius": String(Math.max(0, props.highlightRadius ?? 0)),
 }));
 
+// 当前展示模式（image/text），无效值兜底到 image。
 const displayMode = computed<DisplayMode>(() =>
   props.displayMode === "text" ? "text" : "image",
 );
+// 高亮圆角半径（负值保护）。
 const highlightRadius = computed(() => Math.max(0, props.highlightRadius ?? 0));
+// 实际播放倍速（非法值回退到 1）。
 const effectivePlaybackRate = computed(() => {
   const rate = Number(props.playbackRate);
   return Number.isFinite(rate) && rate > 0 ? rate : 1;
 });
+// 自动跟随恢复延时（毫秒，非法值回退到默认值）。
 const effectiveAutoFollowResumeDelay = computed(() => {
   const delay = Number(props.autoFollowResumeDelayMs);
   return Number.isFinite(delay) && delay >= 0 ? delay : 1800;
 });
 
+// 浏览器是否支持混合模式（用于高亮叠加效果）。
 const supportsBlendMode =
   typeof CSS !== "undefined" &&
   typeof CSS.supports === "function" &&
@@ -583,10 +619,7 @@ function formatLineText(words: WordModel[]): string {
 
 // 计算单行时间范围，若词没有时间则回退到分段范围。
 function lineTimeRange(run: RunModel, segment: SegmentModel) {
-  const timedWords = run.words.filter(
-    (w): w is WordModel & { t0: number; t1: number } =>
-      typeof w.t0 === "number" && typeof w.t1 === "number",
-  );
+  const timedWords = run.timedWords;
   if (!timedWords.length) return { t0: segment.t0, t1: segment.t1 };
   return {
     t0: Math.min(...timedWords.map((w) => w.t0)),
@@ -594,6 +627,7 @@ function lineTimeRange(run: RunModel, segment: SegmentModel) {
   };
 }
 
+// 文本模式行数据：由分段 runs 动态映射而来。
 const textLines = computed<TextLineModel[]>(() =>
   segments.value.flatMap((segment, segmentIndex) =>
     segment.runs.map((run, runIndex) => {
@@ -610,6 +644,7 @@ const textLines = computed<TextLineModel[]>(() =>
   ),
 );
 
+// 当前文本模式活跃行索引。
 const activeTextLineIndex = computed(() => {
   if (currentSegmentIndex.value < 0) return -1;
   const currentLines = textLines.value;
@@ -643,6 +678,7 @@ const activeTextLineIndex = computed(() => {
   );
 });
 
+// 文本模式上下 spacer 样式（用于视觉居中）。
 const textSpacerStyle = computed(() => {
   const h = Math.max(0, textStageHeight.value / 2);
   return { height: `${h}px` };

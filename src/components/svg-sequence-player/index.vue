@@ -196,17 +196,20 @@ let prevPlaybackRate = NaN;
 let prevDisplayMode: DisplayMode | null = null;
 let prevAutoFollowText: boolean | null = null;
 
+// 更新并广播播放器状态，避免重复派发相同状态。
 function setState(next: PlayerState) {
   if (playerState.value === next) return;
   playerState.value = next;
   emit("state-change", next);
 }
 
+// 停止当前 RAF 循环，终止逐帧进度更新。
 function stopRaf() {
   if (raf) cancelAnimationFrame(raf);
   raf = 0;
 }
 
+// 将外部倍速同步到底层 audio 对象。
 function applyPlaybackRate(rate: number) {
   audio.playbackRate = rate;
   // In some WebView/browser combinations this helps make the speed change obvious.
@@ -216,18 +219,21 @@ function applyPlaybackRate(rate: number) {
   }
 }
 
+// 重置所有分段/行的高亮进度。
 function resetAllProgress() {
   for (const segment of segments.value) {
     for (const run of segment.runs) runProgress[run.id] = 0;
   }
 }
 
+// 仅重置指定分段的行进度，用于切换分段时清理历史痕迹。
 function resetSegmentRunProgress(segmentIndex: number) {
   const segment = segments.value[segmentIndex];
   if (!segment) return;
   for (const run of segment.runs) runProgress[run.id] = 0;
 }
 
+// 结束当前 segment 的等待 Promise（成功/失败）。
 function settleSegment(ok: boolean) {
   if (!resolveSegment) return;
   cleanupSegmentListeners?.();
@@ -237,12 +243,14 @@ function settleSegment(ok: boolean) {
   fn(ok);
 }
 
+// 获取当前活跃分段 id（无活跃分段时返回 null）。
 function activeSegmentId() {
   const idx = currentSegmentIndex.value;
   if (idx < 0 || idx >= segments.value.length) return null;
   return segments.value[idx]?.id ?? null;
 }
 
+// 播放中的逐帧主循环：推进高亮进度并处理分段结束。
 function tick() {
   const activeIndex = currentSegmentIndex.value;
   const active = segments.value[activeIndex];
@@ -272,6 +280,7 @@ function tick() {
   raf = requestAnimationFrame(tick);
 }
 
+// 跳转音频到指定毫秒，带 token 防抖避免过期流程继续执行。
 function seekToMs(ms: number, token: number) {
   const target = ms / 1000;
   if (Math.abs(audio.currentTime - target) < 0.015) return Promise.resolve();
@@ -295,6 +304,7 @@ function seekToMs(ms: number, token: number) {
   });
 }
 
+// 播放单个分段并返回是否成功完成。
 async function playSegment(index: number, token: number): Promise<boolean> {
   const segment = segments.value[index];
   if (!segment) return false;
@@ -347,6 +357,7 @@ async function playSegment(index: number, token: number): Promise<boolean> {
   });
 }
 
+// 内部停止：中断当前流程并重置状态（可选择是否回到 idle/error）。
 function stopInternal(setIdleState = true) {
   sequenceToken += 1;
   stopAtMs = null;
@@ -390,6 +401,7 @@ async function playAll() {
   emit("finished");
 }
 
+// 暂停播放并保持当前进度。
 function pause() {
   if (playerState.value !== "playing") return;
   audio.pause();
@@ -397,6 +409,7 @@ function pause() {
   setState("paused");
 }
 
+// 从暂停状态恢复播放。
 async function resume() {
   if (playerState.value !== "paused") return;
   try {
@@ -409,6 +422,7 @@ async function resume() {
   }
 }
 
+// 根据当前状态在暂停/继续之间切换。
 function togglePause() {
   if (playerState.value === "playing") {
     pause();
@@ -419,10 +433,12 @@ function togglePause() {
   }
 }
 
+// 对外暴露的停止动作，结束当前播放并回到可重播状态。
 function stop() {
   stopInternal(true);
 }
 
+// 读取图片原始尺寸，作为坐标系基准。
 function resolveImageSize(url: string): Promise<{ width: number; height: number }> {
   const src = url.trim();
   if (!src) return Promise.resolve({ width: 0, height: 0 });
@@ -439,6 +455,7 @@ function resolveImageSize(url: string): Promise<{ width: number; height: number 
   });
 }
 
+// 加载并归一化 segment 数据模型，构建可渲染运行时状态。
 async function loadModels() {
   setState("loading");
   errorText.value = "";
@@ -487,6 +504,7 @@ const supportsBlendMode =
   typeof CSS.supports === "function" &&
   CSS.supports("mix-blend-mode", "multiply");
 
+// 将高亮色转成带透明度的 rgba，供进度背景渐变使用。
 function toSoftColor(color: string, alpha: number): string {
   const safeAlpha = Math.max(0, Math.min(1, alpha));
   const hex = color.trim().replace("#", "");
@@ -515,6 +533,7 @@ function toSoftColor(color: string, alpha: number): string {
   return `rgba(242, 180, 174, ${safeAlpha})`;
 }
 
+// 记录/移除文本行 DOM 引用，供居中滚动计算使用。
 function bindTextLineEl(
   id: string,
   el: Element | { $el?: Element | null } | null,
@@ -533,6 +552,7 @@ function bindTextLineEl(
   }
 }
 
+// 将一行词列表拼接成人类可读文本（处理标点前空格）。
 function formatLineText(words: WordModel[]): string {
   const punct = /^[,.;:!?，。！？、）》】\])]+$/;
   const joined: string[] = [];
@@ -546,6 +566,7 @@ function formatLineText(words: WordModel[]): string {
   return joined.join("").trim();
 }
 
+// 计算单行时间范围，若词没有时间则回退到分段范围。
 function lineTimeRange(run: RunModel, segment: SegmentModel) {
   const timedWords = run.words.filter(
     (w): w is WordModel & { t0: number; t1: number } =>
@@ -612,6 +633,7 @@ const textSpacerStyle = computed(() => {
   return { height: `${h}px` };
 });
 
+// 计算当前激活行的阅读进度（0~1）。
 function lineProgress(index: number, line: TextLineModel): number {
   if (activeTextLineIndex.value < 0) return 0;
   if (index !== activeTextLineIndex.value) return 0;
@@ -619,12 +641,14 @@ function lineProgress(index: number, line: TextLineModel): number {
   return Math.max(0, Math.min(1, (currentTimeMs.value - line.t0) / duration));
 }
 
+// 生成文本行样式变量，用于驱动行内背景进度渲染。
 function textLineStyle(index: number, line: TextLineModel) {
   return {
     "--seg-progress": `${(lineProgress(index, line) * 100).toFixed(2)}%`,
   };
 }
 
+// 判断当前是否允许自动跟随到激活行。
 function shouldAutoFollowText() {
   return (
     displayMode.value === "text" &&
@@ -633,6 +657,7 @@ function shouldAutoFollowText() {
   );
 }
 
+// 将当前激活行滚动到可视区域垂直中心。
 function centerActiveTextLine(
   behavior: ScrollBehavior = "smooth",
   force = false,
@@ -664,11 +689,13 @@ function centerActiveTextLine(
   stage.scrollTo({ top: nextTop, behavior });
 }
 
+// 同步文本容器高度，供顶部/底部 spacer 计算。
 function syncTextStageSize() {
   const stage = textStageRef.value;
   textStageHeight.value = stage?.clientHeight ?? 0;
 }
 
+// 为文本容器绑定 resize 监听，容器尺寸变化时重新居中。
 function bindTextStageObserver() {
   textStageResizeObserver?.disconnect();
   textStageResizeObserver = null;
@@ -686,6 +713,7 @@ function bindTextStageObserver() {
   syncTextStageSize();
 }
 
+// 用户手动滚动后延时恢复自动跟随。
 function scheduleAutoFollowResume() {
   window.clearTimeout(textAutoFollowResumeTimer);
   textAutoFollowResumeTimer = window.setTimeout(() => {
@@ -694,12 +722,14 @@ function scheduleAutoFollowResume() {
   }, effectiveAutoFollowResumeDelay.value);
 }
 
+// 处理用户交互：暂时关闭自动跟随，避免与手势抢滚动。
 function handleTextStageUserInteraction() {
   if (!props.autoFollowText || displayMode.value !== "text") return;
   textAutoFollowAllowed.value = false;
   scheduleAutoFollowResume();
 }
 
+// 处理文本容器滚动事件（忽略程序触发的滚动）。
 function handleTextStageScroll() {
   if (Date.now() - lastProgrammaticScrollAt < 120) return;
   handleTextStageUserInteraction();
@@ -778,6 +808,7 @@ onUpdated(() => {
   syncTextStageObserver();
 });
 
+// 组件卸载时清理定时器、observer、音频播放流程。
 onBeforeUnmount(() => {
   window.clearTimeout(textAutoFollowResumeTimer);
   textStageResizeObserver?.disconnect();

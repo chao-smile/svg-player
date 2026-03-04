@@ -63,6 +63,8 @@
         ref="playerRef"
         :image-url="imageUrl"
         :segment-assets="segmentAssets"
+        :source-image-width="sourceImageWidth"
+        :source-image-height="sourceImageHeight"
         :display-mode="displayMode"
         :playback-rate="playbackRate"
         @finished="onPlayerFinished"
@@ -123,6 +125,9 @@ const playbackRateOptions = [1, 1.25, 1.5, 2] as const;
 const playbackRate = ref<number>(playbackRateOptions[0]);
 const displayMode = ref<"image" | "text">("image");
 const activePlayer = computed(() => playerRef.value);
+// 示例：显式传入原图尺寸。若不传，播放器会退回到 imageUrl 自解析尺寸。
+const sourceImageWidth = 1235;
+const sourceImageHeight = 774;
 
 async function loadManifest() {
   loading.value = true;
@@ -219,6 +224,8 @@ const displayModeText = computed(() =>
 const playerPropsData = computed(() => ({
   imageUrl: imageUrl.value,
   segmentAssets: segmentAssets.value,
+  sourceImageWidth,
+  sourceImageHeight,
   displayMode: displayMode.value,
   playbackRate: playbackRate.value,
 }));

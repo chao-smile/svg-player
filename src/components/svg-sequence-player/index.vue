@@ -140,6 +140,8 @@ const props = withDefaults(
   defineProps<{
     imageUrl: string;
     segmentAssets: SegmentAsset[];
+    sourceImageWidth?: number;
+    sourceImageHeight?: number;
     showOutline?: boolean;
     highlightColor?: string;
     highlightRadius?: number;
@@ -460,14 +462,27 @@ async function loadModels() {
   setState("loading");
   errorText.value = "";
   try {
-    const imageMeta = await resolveImageSize(props.imageUrl);
+    const widthFromProp = Number(props.sourceImageWidth);
+    const heightFromProp = Number(props.sourceImageHeight);
+    const hasWidthFromProp = Number.isFinite(widthFromProp) && widthFromProp > 0;
+    const hasHeightFromProp =
+      Number.isFinite(heightFromProp) && heightFromProp > 0;
+
+    const imageMeta =
+      hasWidthFromProp && hasHeightFromProp
+        ? { width: widthFromProp, height: heightFromProp }
+        : await resolveImageSize(props.imageUrl);
+
+    const imageWidthBase = hasWidthFromProp ? widthFromProp : imageMeta.width;
+    const imageHeightBase = hasHeightFromProp ? heightFromProp : imageMeta.height;
+
     // 将 OCR/TTS 原始数据归一化为可渲染的运行模型。
     const loaded = await loadSegmentModels(props.segmentAssets, {
-      imageWidth: imageMeta.width,
-      imageHeight: imageMeta.height,
+      imageWidth: imageWidthBase,
+      imageHeight: imageHeightBase,
     });
-    imageWidth.value = loaded.imageWidth || imageMeta.width;
-    imageHeight.value = loaded.imageHeight || imageMeta.height;
+    imageWidth.value = loaded.imageWidth || imageWidthBase;
+    imageHeight.value = loaded.imageHeight || imageHeightBase;
     segments.value = loaded.segments;
     resetAllProgress();
     setState("idle");

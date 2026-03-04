@@ -215,6 +215,8 @@ let resolveSegment: ((ok: boolean) => void) | null = null;
 let cleanupSegmentListeners: (() => void) | null = null;
 // 上一次渲染的分段索引。
 let lastRenderedSegmentIndex = -1;
+// 上一次已居中的文本行 id（用于避免同一行重复触发滚动动画）。
+let lastCenteredTextLineId = "";
 // 上一次 segmentAssets 引用快照（用于显式对比更新）。
 let prevSegmentAssetsRef: SegmentAsset[] | null = null;
 // 上一次 imageUrl 快照（用于显式对比更新）。
@@ -282,6 +284,18 @@ function activeSegmentId() {
 // 活跃分段 id 的计算结果缓存，减少模板重复调用函数。
 const activeSegmentIdValue = computed(() => activeSegmentId());
 
+// 播放中同步文本跟随：仅在“活跃行变化”时触发平滑滚动。
+function syncTextFollowOnPlayback() {
+  if (!shouldAutoFollowText()) return;
+  const idx = activeTextLineIndex.value;
+  if (idx < 0) return;
+  const line = textLines.value[idx];
+  if (!line) return;
+  if (line.id === lastCenteredTextLineId) return;
+  lastCenteredTextLineId = line.id;
+  centerActiveTextLine("smooth");
+}
+
 // 播放中的逐帧主循环：推进高亮进度并处理分段结束。
 function tick() {
   const activeIndex = currentSegmentIndex.value;
@@ -299,7 +313,7 @@ function tick() {
     const prev = runProgress[run.id] ?? 0;
     runProgress[run.id] = Math.max(prev, next);
   }
-  centerActiveTextLine("auto");
+  syncTextFollowOnPlayback();
 
   if (stopAtMs != null && tMs >= stopAtMs) {
     for (const run of active.runs) runProgress[run.id] = 1;
@@ -399,6 +413,7 @@ function stopInternal(setIdleState = true) {
   stopRaf();
   settleSegment(false);
   currentSegmentIndex.value = -1;
+  lastCenteredTextLineId = "";
   resetAllProgress();
   if (setIdleState) setState(errorText.value ? "error" : "idle");
 }
@@ -793,6 +808,7 @@ function syncDisplayMode(force = false) {
   prevDisplayMode = mode;
   window.clearTimeout(textAutoFollowResumeTimer);
   textAutoFollowAllowed.value = true;
+  lastCenteredTextLineId = "";
   if (mode !== "text") return;
   void nextTick(() => {
     centerActiveTextLine("auto", true);
@@ -836,6 +852,7 @@ function syncSegmentSource(force = false) {
   if (!force && !assetsChanged && !imageChanged) return;
   prevSegmentAssetsRef = props.segmentAssets;
   prevImageUrl = props.imageUrl;
+  lastCenteredTextLineId = "";
   stopInternal(false);
   void loadModels();
 }

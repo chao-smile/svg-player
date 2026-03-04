@@ -1,10 +1,10 @@
 <template>
   <div
     class="root"
-    :class="{ 'blend-supported': supportsBlendMode }"
+    :class="{ 'blend-supported': supportsBlendMode, 'text-mode-root': displayMode === 'text' }"
     :style="themeVars"
   >
-    <div class="status">
+    <div class="status" v-if="playerState === 'loading' || playerState === 'error'">
       <span v-if="playerState === 'loading'">加载段落数据中...</span>
       <span v-else-if="playerState === 'error'" class="err">{{
         errorText
@@ -123,10 +123,16 @@ import type {
   SegmentAsset,
   SegmentModel,
   SvgSequencePlayerExpose,
-  WordModel,
 } from "./types";
 
 type DisplayMode = "image" | "text";
+type TextWordProgressCue = {
+  id: string;
+  t0: number;
+  t1: number;
+  startUnit: number;
+  endUnit: number;
+};
 type TextLineModel = {
   id: string;
   text: string;
@@ -134,6 +140,8 @@ type TextLineModel = {
   segmentId: string;
   t0: number;
   t1: number;
+  totalUnits: number;
+  wordCues: TextWordProgressCue[];
 };
 
 // 组件入参：图片地址、分段资源与播放器外观/行为配置。
@@ -198,8 +206,8 @@ let observedTextStageEl: HTMLElement | null = null;
 const textAutoFollowAllowed = ref(true);
 // 自动跟随恢复定时器 id。
 let textAutoFollowResumeTimer = 0;
-// 最近一次程序触发滚动的时间戳（用于区分用户滚动）。
-let lastProgrammaticScrollAt = 0;
+// 程序滚动锁截止时间：在这之前忽略 scroll 事件，避免程序滚动被误判为手动滚动。
+let programmaticScrollLockUntil = 0;
 
 // 全局复用的底层音频实例。
 const audio = new Audio();
@@ -217,10 +225,14 @@ let cleanupSegmentListeners: (() => void) | null = null;
 let lastRenderedSegmentIndex = -1;
 // 上一次已居中的文本行 id（用于避免同一行重复触发滚动动画）。
 let lastCenteredTextLineId = "";
-// 上一次 segmentAssets 引用快照（用于显式对比更新）。
-let prevSegmentAssetsRef: SegmentAsset[] | null = null;
+// 上一次 segmentAssets 内容签名快照（用于显式对比更新）。
+let prevSegmentAssetsSignature = "";
 // 上一次 imageUrl 快照（用于显式对比更新）。
 let prevImageUrl = "";
+// 上一次 sourceImageWidth 快照。
+let prevImageWidth = NaN;
+// 上一次 sourceImageHeight 快照。
+let prevImageHeight = NaN;
 // 上一次倍速快照（避免重复写入 audio.playbackRate）。
 let prevPlaybackRate = NaN;
 // 上一次展示模式快照（用于模式切换副作用控制）。
@@ -276,13 +288,11 @@ function settleSegment(ok: boolean) {
 }
 
 // 获取当前活跃分段 id（无活跃分段时返回 null）。
-function activeSegmentId() {
+const activeSegmentIdValue = computed(() => {
   const idx = currentSegmentIndex.value;
   if (idx < 0 || idx >= segments.value.length) return null;
   return segments.value[idx]?.id ?? null;
-}
-// 活跃分段 id 的计算结果缓存，减少模板重复调用函数。
-const activeSegmentIdValue = computed(() => activeSegmentId());
+});
 
 // 播放中同步文本跟随：仅在“活跃行变化”时触发平滑滚动。
 function syncTextFollowOnPlayback() {
@@ -294,6 +304,29 @@ function syncTextFollowOnPlayback() {
   if (line.id === lastCenteredTextLineId) return;
   lastCenteredTextLineId = line.id;
   centerActiveTextLine("smooth");
+}
+
+// 同步“当前已居中文本行”标记，避免首帧重复触发平滑滚动。
+function syncCenteredLineMarker() {
+  const idx = activeTextLineIndex.value;
+  if (idx < 0) {
+    lastCenteredTextLineId = "";
+    return;
+  }
+  const line = textLines.value[idx];
+  lastCenteredTextLineId = line?.id ?? "";
+}
+
+// 计算“首次进入文本模式”应该定位到的行（通常是首段最早时间行）。
+function resolveInitialTextLineId() {
+  const lines = textLines.value;
+  if (!lines.length) return "";
+  const firstSegmentLines = lines.filter((line) => line.segmentIndex === 0);
+  if (!firstSegmentLines.length) return lines[0]?.id ?? "";
+  const firstLine = firstSegmentLines.reduce((best, current) =>
+    current.t0 < best.t0 ? current : best,
+  );
+  return firstLine.id;
 }
 
 // 播放中的逐帧主循环：推进高亮进度并处理分段结束。
@@ -362,6 +395,9 @@ async function playSegment(index: number, token: number): Promise<boolean> {
   currentSegmentIndex.value = index;
   currentTimeMs.value = segment.t0;
   stopAtMs = segment.t1;
+  // 每个分段开播前先把首句“无动画居中”，避免刚播放就先滚一下。
+  centerActiveTextLine("auto", true);
+  syncCenteredLineMarker();
 
   if (audio.src !== segment.audioUrl) {
     audio.src = segment.audioUrl;
@@ -414,6 +450,7 @@ function stopInternal(setIdleState = true) {
   settleSegment(false);
   currentSegmentIndex.value = -1;
   lastCenteredTextLineId = "";
+  programmaticScrollLockUntil = 0;
   resetAllProgress();
   if (setIdleState) setState(errorText.value ? "error" : "idle");
 }
@@ -532,7 +569,11 @@ async function loadModels() {
     resetAllProgress();
     setState("idle");
     void nextTick(() => {
-      centerActiveTextLine("auto", true);
+      if (displayMode.value === "text") {
+        centerInitialTextLine("auto");
+      } else {
+        centerActiveTextLine("auto", true);
+      }
     });
   } catch (e) {
     errorText.value = String((e as Error)?.message ?? e);
@@ -618,44 +659,98 @@ function bindTextLineEl(
   }
 }
 
-// 将一行词列表拼接成人类可读文本（处理标点前空格）。
-function formatLineText(words: WordModel[]): string {
-  const punct = /^[,.;:!?，。！？、）》】\])]+$/;
-  const joined: string[] = [];
-  for (const word of words) {
-    if (!joined.length || punct.test(word.text)) {
-      joined.push(word.text);
-    } else {
-      joined.push(` ${word.text}`);
+const punctPattern = /^[,.;:!?，。！？、）》】\])]+$/;
+const latinPattern = /[A-Za-z0-9]/;
+const cjkPattern = /[\u3400-\u9FFF]/;
+
+// 估算词在文本模式下的视觉宽度单位（用于把词级时间映射到整行进度）。
+function estimateWordUnits(text: string): number {
+  const clean = String(text || "");
+  if (!clean) return 0.8;
+  let units = 0;
+  for (const ch of clean) {
+    if (cjkPattern.test(ch)) {
+      units += 1;
+      continue;
     }
+    if (latinPattern.test(ch)) {
+      units += 0.62;
+      continue;
+    }
+    units += punctPattern.test(ch) ? 0.45 : 0.7;
   }
-  return joined.join("").trim();
+  return Math.max(0.45, units);
 }
 
-// 计算单行时间范围，若词没有时间则回退到分段范围。
-function lineTimeRange(run: RunModel, segment: SegmentModel) {
-  const timedWords = run.timedWords;
-  if (!timedWords.length) return { t0: segment.t0, t1: segment.t1 };
+// 构建文本行：同时生成展示文案和词级时间锚点，支持“逐词 + 连续”进度。
+function buildTextLineModel(
+  run: RunModel,
+  segment: SegmentModel,
+  segmentIndex: number,
+  runIndex: number,
+): TextLineModel {
+  const textParts: string[] = [];
+  const wordCues: TextWordProgressCue[] = [];
+  let cursorUnits = 0;
+
+  run.words.forEach((word, wordIndex) => {
+    const token = String(word.text || "");
+    const addLeadingSpace = textParts.length > 0 && !punctPattern.test(token);
+    if (addLeadingSpace) {
+      textParts.push(` ${token}`);
+      cursorUnits += 0.42;
+    } else {
+      textParts.push(token);
+    }
+
+    const startUnit = cursorUnits;
+    const endUnit = startUnit + estimateWordUnits(token);
+    cursorUnits = endUnit;
+
+    if (typeof word.t0 === "number" && typeof word.t1 === "number" && word.t1 > word.t0) {
+      wordCues.push({
+        id: `${segment.id}-run-${runIndex + 1}-word-${wordIndex + 1}`,
+        t0: word.t0,
+        t1: word.t1,
+        startUnit,
+        endUnit,
+      });
+    }
+  });
+
+  const totalUnits = Math.max(cursorUnits, 1);
+  const sortedCues = [...wordCues].sort((a, b) => a.t0 - b.t0 || a.t1 - b.t1);
+  const normalizedCues: TextWordProgressCue[] = [];
+  let lastEndUnit = 0;
+  for (const cue of sortedCues) {
+    const startUnit = Math.max(lastEndUnit, Math.min(totalUnits, cue.startUnit));
+    const endUnit = Math.max(startUnit, Math.min(totalUnits, cue.endUnit));
+    normalizedCues.push({
+      ...cue,
+      startUnit,
+      endUnit,
+    });
+    lastEndUnit = endUnit;
+  }
+  const t0 = normalizedCues.length ? normalizedCues[0]!.t0 : segment.t0;
+  const t1 = normalizedCues.length ? normalizedCues[normalizedCues.length - 1]!.t1 : segment.t1;
+
   return {
-    t0: Math.min(...timedWords.map((w) => w.t0)),
-    t1: Math.max(...timedWords.map((w) => w.t1)),
+    id: `${segment.id}-line-${runIndex + 1}`,
+    text: textParts.join("").trim(),
+    segmentIndex,
+    segmentId: segment.id,
+    t0,
+    t1,
+    totalUnits,
+    wordCues: normalizedCues,
   };
 }
 
 // 文本模式行数据：由分段 runs 动态映射而来。
 const textLines = computed<TextLineModel[]>(() =>
   segments.value.flatMap((segment, segmentIndex) =>
-    segment.runs.map((run, runIndex) => {
-      const range = lineTimeRange(run, segment);
-      return {
-        id: `${segment.id}-line-${runIndex + 1}`,
-        text: formatLineText(run.words),
-        segmentIndex,
-        segmentId: segment.id,
-        t0: range.t0,
-        t1: range.t1,
-      };
-    }),
+    segment.runs.map((run, runIndex) => buildTextLineModel(run, segment, segmentIndex, runIndex)),
   ),
 );
 
@@ -703,8 +798,42 @@ const textSpacerStyle = computed(() => {
 function lineProgress(index: number, line: TextLineModel): number {
   if (activeTextLineIndex.value < 0) return 0;
   if (index !== activeTextLineIndex.value) return 0;
-  const duration = Math.max(1, line.t1 - line.t0);
-  return Math.max(0, Math.min(1, (currentTimeMs.value - line.t0) / duration));
+  const tMs = currentTimeMs.value;
+  const cues = line.wordCues;
+
+  // 无词级时间戳时，回退为整行线性进度。
+  if (!cues.length) {
+    const duration = Math.max(1, line.t1 - line.t0);
+    return Math.max(0, Math.min(1, (tMs - line.t0) / duration));
+  }
+
+  const first = cues[0]!;
+  const last = cues[cues.length - 1]!;
+  if (tMs <= first.t0) return 0;
+  if (tMs >= last.t1) return 1;
+
+  for (let i = 0; i < cues.length; i += 1) {
+    const cue = cues[i]!;
+    const prev = i > 0 ? cues[i - 1]! : null;
+
+    // 词间空隙：在“上词结束 -> 下词开始”之间继续平滑推进，避免进度断档。
+    if (prev && tMs >= prev.t1 && tMs < cue.t0) {
+      const gap = Math.max(1, cue.t0 - prev.t1);
+      const ratio = Math.max(0, Math.min(1, (tMs - prev.t1) / gap));
+      const unit = prev.endUnit + (cue.startUnit - prev.endUnit) * ratio;
+      return Math.max(0, Math.min(1, unit / line.totalUnits));
+    }
+
+    // 当前词内：按该词时间窗口线性推进。
+    if (tMs >= cue.t0 && tMs < cue.t1) {
+      const duration = Math.max(1, cue.t1 - cue.t0);
+      const ratio = Math.max(0, Math.min(1, (tMs - cue.t0) / duration));
+      const unit = cue.startUnit + (cue.endUnit - cue.startUnit) * ratio;
+      return Math.max(0, Math.min(1, unit / line.totalUnits));
+    }
+  }
+
+  return 1;
 }
 
 // 生成文本行样式变量，用于驱动行内背景进度渲染。
@@ -730,12 +859,18 @@ function centerActiveTextLine(
 ) {
   if (!force && !shouldAutoFollowText()) return;
   if (displayMode.value !== "text") return;
-  const stage = textStageRef.value;
-  if (!stage) return;
   if (activeTextLineIndex.value < 0) return;
   const activeLine = textLines.value[activeTextLineIndex.value];
   if (!activeLine) return;
-  const activeEl = textLineEls.get(activeLine.id);
+  centerTextLineById(activeLine.id, behavior);
+}
+
+// 将指定行滚动到容器中心。
+function centerTextLineById(lineId: string, behavior: ScrollBehavior = "smooth") {
+  if (displayMode.value !== "text") return;
+  const stage = textStageRef.value;
+  if (!stage) return;
+  const activeEl = textLineEls.get(lineId);
   if (!activeEl) return;
 
   const stageRect = stage.getBoundingClientRect();
@@ -746,13 +881,21 @@ function centerActiveTextLine(
     (stageRect.top + stageRect.height / 2);
   const maxTop = Math.max(0, stage.scrollHeight - stage.clientHeight);
   const nextTop = Math.max(0, Math.min(targetTop, maxTop));
-  // 记录程序触发的滚动时间，避免被当作用户手动滚动。
-  lastProgrammaticScrollAt = Date.now();
-  if (behavior === "auto") {
-    if (Math.abs(stage.scrollTop - nextTop) > 0.5) stage.scrollTop = nextTop;
+  const now = Date.now();
+  // smooth 会持续触发 scroll，短暂加锁避免误判为用户滚动。
+  programmaticScrollLockUntil = now + (behavior === "smooth" ? 620 : 180);
+  stage.scrollTo({ top: nextTop, behavior });
+}
+
+// 文本模式初始定位：将首句放到目标居中位置，避免开播后先滚一下。
+function centerInitialTextLine(behavior: ScrollBehavior = "auto") {
+  const lineId = resolveInitialTextLineId();
+  if (!lineId) {
+    lastCenteredTextLineId = "";
     return;
   }
-  stage.scrollTo({ top: nextTop, behavior });
+  centerTextLineById(lineId, behavior);
+  lastCenteredTextLineId = lineId;
 }
 
 // 同步文本容器高度，供顶部/底部 spacer 计算。
@@ -797,7 +940,7 @@ function handleTextStageUserInteraction() {
 
 // 处理文本容器滚动事件（忽略程序触发的滚动）。
 function handleTextStageScroll() {
-  if (Date.now() - lastProgrammaticScrollAt < 120) return;
+  if (Date.now() < programmaticScrollLockUntil) return;
   handleTextStageUserInteraction();
 }
 
@@ -809,9 +952,15 @@ function syncDisplayMode(force = false) {
   window.clearTimeout(textAutoFollowResumeTimer);
   textAutoFollowAllowed.value = true;
   lastCenteredTextLineId = "";
+  programmaticScrollLockUntil = 0;
   if (mode !== "text") return;
   void nextTick(() => {
+    if (currentSegmentIndex.value < 0) {
+      centerInitialTextLine("auto");
+      return;
+    }
     centerActiveTextLine("auto", true);
+    syncCenteredLineMarker();
   });
 }
 
@@ -845,14 +994,43 @@ function syncPlaybackRate(force = false) {
   applyPlaybackRate(rate);
 }
 
+// 计算分段资源签名：用于检测“数组引用不变但内容变更”的场景。
+function buildSegmentAssetsSignature(assets: SegmentAsset[]): string {
+  return assets
+    .map((asset, index) => {
+      const ocrTts = Array.isArray(asset.ocr_tts) ? asset.ocr_tts : [];
+      const firstWord = ocrTts[0];
+      const lastWord = ocrTts[ocrTts.length - 1];
+      return [
+        index,
+        String(asset.id ?? ""),
+        String(asset.audio_url ?? ""),
+        String(asset.text ?? ""),
+        ocrTts.length,
+        String(firstWord?.begin_time ?? ""),
+        String(firstWord?.text ?? ""),
+        String(lastWord?.end_time ?? ""),
+        String(lastWord?.text ?? ""),
+      ].join(":");
+    })
+    .join("|");
+}
+
 // 数据源同步：segment 或 image 变化时重建模型，数据流入口集中在这里。
 function syncSegmentSource(force = false) {
-  const assetsChanged = prevSegmentAssetsRef !== props.segmentAssets;
+  const segmentAssetsSignature = buildSegmentAssetsSignature(props.segmentAssets);
+  const assetsChanged = prevSegmentAssetsSignature !== segmentAssetsSignature;
   const imageChanged = prevImageUrl !== props.imageUrl;
-  if (!force && !assetsChanged && !imageChanged) return;
-  prevSegmentAssetsRef = props.segmentAssets;
+  const widthChanged = prevImageWidth !== Number(props.sourceImageWidth ?? NaN);
+  const heightChanged = prevImageHeight !== Number(props.sourceImageHeight ?? NaN);
+  if (!force && !assetsChanged && !imageChanged && !widthChanged && !heightChanged) return;
+
+  prevSegmentAssetsSignature = segmentAssetsSignature;
   prevImageUrl = props.imageUrl;
+  prevImageWidth = Number(props.sourceImageWidth ?? NaN);
+  prevImageHeight = Number(props.sourceImageHeight ?? NaN);
   lastCenteredTextLineId = "";
+  programmaticScrollLockUntil = 0;
   stopInternal(false);
   void loadModels();
 }
@@ -902,6 +1080,11 @@ defineExpose<SvgSequencePlayerExpose>({
   --hl-color: #f2b4ae;
 }
 
+.text-mode-root {
+  height: 100%;
+  min-height: 0;
+}
+
 .status {
   font-size: 12px;
   color: #374151;
@@ -934,7 +1117,8 @@ defineExpose<SvgSequencePlayerExpose>({
 
 .text-stage {
   width: min(100%, 1100px);
-  height: clamp(260px, 62vh, 620px);
+  height: 100%;
+  min-height: 0;
   overflow-y: auto;
   overflow-x: hidden;
   scrollbar-width: none;

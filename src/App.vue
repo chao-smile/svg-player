@@ -58,7 +58,11 @@
       <div v-else-if="errorText" class="error">{{ errorText }}</div>
     </section>
 
-    <section class="panel" v-if="segmentAssets.length && imageUrl">
+    <section
+      class="panel player-panel"
+      :class="{ 'text-mode': displayMode === 'text' }"
+      v-if="segmentAssets.length && imageUrl"
+    >
       <SvgSequencePlayer
         ref="playerRef"
         :image-url="imageUrl"
@@ -267,6 +271,20 @@ onMounted(async () => {
   padding: 14px;
   display: grid;
   gap: 10px;
+}
+
+.player-panel {
+  min-height: 260px;
+}
+
+.player-panel.text-mode {
+  height: clamp(360px, 72vh, 760px);
+  min-height: 0;
+}
+
+.player-panel.text-mode :deep(.root) {
+  height: 100%;
+  min-height: 0;
 }
 
 .line {

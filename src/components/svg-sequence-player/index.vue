@@ -256,11 +256,15 @@ function stopRaf() {
 // 将外部倍速同步到底层 audio 对象。
 function applyPlaybackRate(rate: number) {
   audio.playbackRate = rate;
-  // In some WebView/browser combinations this helps make the speed change obvious.
-  if ("preservesPitch" in audio) {
-    (audio as HTMLMediaElement & { preservesPitch?: boolean }).preservesPitch =
-      false;
-  }
+  // Keep pitch when changing speed to reduce chipmunk-like distortion.
+  const media = audio as HTMLMediaElement & {
+    preservesPitch?: boolean;
+    mozPreservesPitch?: boolean;
+    webkitPreservesPitch?: boolean;
+  };
+  if ("preservesPitch" in media) media.preservesPitch = true;
+  if ("mozPreservesPitch" in media) media.mozPreservesPitch = true;
+  if ("webkitPreservesPitch" in media) media.webkitPreservesPitch = true;
 }
 
 // 重置所有分段/行的高亮进度。

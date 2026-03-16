@@ -1,5 +1,173 @@
-# Vue 3 + TypeScript + Vite
+# svg-player
 
-This template should help get you started developing with Vue 3 and TypeScript in Vite. The template uses Vue 3 `<script setup>` SFCs, check out the [script setup docs](https://v3.vuejs.org/api/sfc-script-setup.html#sfc-script-setup) to learn more.
+`SvgSequencePlayer` 是一个基于 Vue 3 的顺序播放组件，用来在一张共享底图上，按照音频时间轴逐段高亮 OCR 文本区域；也支持切换到纯文字滚动播放模式。
 
-Learn more about the recommended Project Setup and IDE Support in the [Vue Docs TypeScript Guide](https://vuejs.org/guide/typescript/overview.html#project-setup).
+组件源码位于 [src/components/svg-sequence-player/index.vue](/Users/pincoudeduanyin/Desktop/demo/ocr/svg-player/src/components/svg-sequence-player/index.vue)，当前 demo 用法可参考 [src/App.vue](/Users/pincoudeduanyin/Desktop/demo/ocr/svg-player/src/App.vue) 和 [src/mock/svgPlayerMock.ts](/Users/pincoudeduanyin/Desktop/demo/ocr/svg-player/src/mock/svgPlayerMock.ts)。
+
+## 启动项目
+
+```bash
+npm install
+npm run dev
+```
+
+## 组件用途
+
+适合这类场景：
+
+- 一张原图，对应多段音频
+- 每段音频都已经有词级 OCR 框和 TTS 时间戳
+- 播放时需要按语音进度推进高亮区域
+- 需要图文高亮模式或纯文字阅读模式
+
+## 快速接入
+
+```vue
+<template>
+  <SvgSequencePlayer
+    ref="playerRef"
+    :image-url="imageUrl"
+    :segment-assets="segmentAssets"
+    :source-image-width="1235"
+    :source-image-height="774"
+    display-mode="image"
+    :playback-rate="1"
+    @finished="handleFinished"
+    @state-change="handleStateChange"
+  />
+
+  <div class="actions">
+    <button @click="playerRef?.playAll()">播放全部</button>
+    <button @click="playerRef?.togglePause()">暂停 / 继续</button>
+    <button @click="playerRef?.stop()">停止</button>
+  </div>
+</template>
+
+<script setup lang="ts">
+import { ref } from "vue";
+import {
+  SvgSequencePlayer,
+  type PlayerState,
+  type SegmentAsset,
+  type SvgSequencePlayerExpose,
+} from "./src/components/svg-sequence-player";
+
+const playerRef = ref<SvgSequencePlayerExpose | null>(null);
+
+const imageUrl = "/assets/test.png";
+const segmentAssets = ref<SegmentAsset[]>([
+  {
+    id: "segment-1",
+    audio_url: "/assets/seg-1.mp3",
+    text: "第一段文本",
+    ocr_tts: [
+      {
+        text: "第一",
+        rotated_rect: [120, 80, 48, 24, 0],
+        begin_time: 0,
+        end_time: 320,
+      },
+      {
+        text: "段",
+        rotated_rect: [176, 80, 24, 24, 0],
+        begin_time: 320,
+        end_time: 560,
+      },
+    ],
+  },
+]);
+
+function handleFinished() {
+  console.log("播放完成");
+}
+
+function handleStateChange(state: PlayerState) {
+  console.log("播放器状态", state);
+}
+</script>
+```
+
+## 数据要求
+
+组件真正消费的是 `SegmentAsset[]`：
+
+```ts
+type SegmentAsset = {
+  id?: string;
+  audio_url: string;
+  text: string;
+  ocr_tts: {
+    text: string;
+    rotated_rect: [number, number, number, number, number] | number[];
+    begin_time: number | string;
+    end_time: number | string;
+  }[];
+};
+```
+
+说明：
+
+- `audio_url` 必填，不能为空
+- `ocr_tts` 必填，且至少要有 1 个词
+- `rotated_rect` 当前至少会读取前 4 位，按 `[centerX, centerY, width, height, angle]` 处理
+- `begin_time` / `end_time` 单位为毫秒
+- 如果某个词缺少合法时间，组件仍会渲染，但该词不会参与时间驱动高亮
+
+## Props
+
+| Prop | 类型 | 必填 | 默认值 | 说明 |
+| --- | --- | --- | --- | --- |
+| `imageUrl` | `string` | 是 | - | 共享底图地址 |
+| `segmentAssets` | `SegmentAsset[]` | 是 | - | 分段音频与词级 OCR/TTS 数据 |
+| `sourceImageWidth` | `number` | 否 | 自动推断 | 原图宽度；不传时优先从 `imageUrl` 解析 |
+| `sourceImageHeight` | `number` | 否 | 自动推断 | 原图高度；不传时优先从 `imageUrl` 解析 |
+| `showOutline` | `boolean` | 否 | `false` | 是否显示每行基础描边框 |
+| `highlightColor` | `string` | 否 | `#f2b4ae` | 高亮颜色 |
+| `highlightRadius` | `number` | 否 | `0` | 高亮圆角半径 |
+| `playbackRate` | `number` | 否 | `1` | 播放倍速，非法值会回退到 `1` |
+| `displayMode` | `"image" \| "text"` | 否 | `"image"` | `image` 为图文高亮，`text` 为纯文字滚动模式 |
+| `autoFollowText` | `boolean` | 否 | `true` | 纯文字模式下是否自动跟随当前激活行 |
+| `autoFollowResumeDelayMs` | `number` | 否 | `1800` | 用户手动滚动后，恢复自动跟随的延时 |
+
+补充说明：
+
+- 传入 `sourceImageWidth` / `sourceImageHeight` 可以避免组件额外解析图片尺寸
+- 如果图片尺寸也拿不到，组件会退回到基于 OCR 词框推导出的最小可用尺寸
+
+## 事件
+
+| 事件名 | 参数 | 说明 |
+| --- | --- | --- |
+| `finished` | 无 | 全部 segment 顺序播放完成后触发 |
+| `state-change` | `PlayerState` | 播放器状态变化时触发 |
+
+`PlayerState` 可选值：
+
+- `loading`
+- `idle`
+- `playing`
+- `paused`
+- `error`
+
+## 暴露方法
+
+通过 `ref` 可调用以下方法：
+
+| 方法 | 返回值 | 说明 |
+| --- | --- | --- |
+| `playAll()` | `Promise<void>` | 从头顺序播放全部 segment |
+| `pause()` | `void` | 暂停播放 |
+| `resume()` | `Promise<void>` | 从暂停状态恢复播放 |
+| `togglePause()` | `void` | 在暂停与继续之间切换 |
+| `stop()` | `void` | 停止播放并回到可重播状态 |
+| `getState()` | `PlayerState` | 获取当前播放器状态 |
+
+## 现有示例数据来源
+
+当前仓库里的 demo 数据流如下：
+
+1. [src/mock/svg-player/manifest.json](/Users/pincoudeduanyin/Desktop/demo/ocr/svg-player/src/mock/svg-player/manifest.json) 描述分段资源
+2. [src/mock/svgPlayerMock.ts](/Users/pincoudeduanyin/Desktop/demo/ocr/svg-player/src/mock/svgPlayerMock.ts) 将 `ocr.json` 和 `tts.json` 合并为组件所需的 `SegmentAsset[]`
+3. [src/App.vue](/Users/pincoudeduanyin/Desktop/demo/ocr/svg-player/src/App.vue) 负责加载数据并调用播放器暴露方法
+
+如果你的数据源也是 `OCR JSON + TTS JSON` 分离存储，可以直接复用这个合并思路。

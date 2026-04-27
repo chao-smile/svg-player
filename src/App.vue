@@ -54,6 +54,53 @@
         </button>
       </div>
 
+      <div class="prop-demo">
+        <div class="title">Props 更新演示</div>
+        <div class="line">
+          <b>Image URL Version:</b> {{ imageUrlVersionText }}
+        </div>
+        <div class="line">
+          <b>SegmentAssets:</b> {{ segmentAssetsVariant }}
+        </div>
+        <div class="actions">
+          <button
+            :disabled="!canUpdateDemoProps"
+            class="secondary"
+            @click="handleImageUrlDemoUpdate"
+          >
+            更新 imageUrl
+          </button>
+          <button
+            :disabled="!canUpdateDemoProps"
+            class="secondary"
+            @click="handleFirstSegmentsDemo"
+          >
+            前 2 段数据
+          </button>
+          <button
+            :disabled="!canUpdateDemoProps"
+            class="secondary"
+            @click="handleMiddleSegmentsDemo"
+          >
+            中间 3 段数据
+          </button>
+          <button
+            :disabled="!canUpdateDemoProps"
+            class="secondary"
+            @click="handleLastSegmentsDemo"
+          >
+            后 2 段数据
+          </button>
+          <button
+            :disabled="!canUpdateDemoProps"
+            class="secondary"
+            @click="handleRestoreAllSegmentsDemo"
+          >
+            恢复全部数据
+          </button>
+        </div>
+      </div>
+
       <div v-if="segmentAssets.length" class="segment-actions">
         <button
           v-for="(item, index) in segmentAssets"
@@ -138,6 +185,8 @@ const playerRef = ref<SvgSequencePlayerExpose | null>(null);
 const playerState = ref<PlayerState>("loading");
 const finishedCount = ref(0);
 const finishedAt = ref("");
+const imageUrlVersion = ref(0);
+const segmentAssetsVariant = ref("全部 5 段");
 const playbackRateOptions = [1, 1.25, 1.5, 2] as const;
 const playbackRate = ref<number>(playbackRateOptions[0]);
 const displayMode = ref<"image" | "text">("image");
@@ -146,13 +195,44 @@ const activePlayer = computed(() => playerRef.value);
 const sourceImageWidth = 1235;
 const sourceImageHeight = 774;
 
+function cloneSegmentAssets(assets: SegmentAsset[]): SegmentAsset[] {
+  return assets.map((asset) => ({
+    ...asset,
+    ocr_tts: asset.ocr_tts.map((word) => ({
+      ...word,
+      rotated_rect: Array.isArray(word.rotated_rect)
+        ? [...word.rotated_rect]
+        : word.rotated_rect,
+    })),
+  }));
+}
+
+function buildImageUrl(version: number) {
+  if (version <= 0) return SVG_PLAYER_IMAGE_URL;
+  const url = new URL(SVG_PLAYER_IMAGE_URL, window.location.href);
+  url.searchParams.set("demoImageVersion", String(version));
+  return url.href;
+}
+
+function applySegmentAssetsDemo(
+  nextAssets: SegmentAsset[],
+  variant: string,
+) {
+  activePlayer.value?.stop();
+  finishedAt.value = "";
+  segmentAssetsVariant.value = variant;
+  segmentAssets.value = cloneSegmentAssets(nextAssets);
+}
+
 async function loadManifest() {
   loading.value = true;
   errorText.value = "";
   try {
     manifest.value = SVG_PLAYER_MANIFEST;
+    imageUrlVersion.value = 0;
+    segmentAssetsVariant.value = "全部 5 段";
     imageUrl.value = SVG_PLAYER_IMAGE_URL;
-    segmentAssets.value = SVG_PLAYER_SEGMENT_ASSETS as SegmentAsset[];
+    segmentAssets.value = cloneSegmentAssets(SVG_PLAYER_SEGMENT_ASSETS);
   } catch (e) {
     errorText.value = String((e as Error)?.message ?? e);
   } finally {
@@ -192,6 +272,29 @@ function handleSpeedButton() {
 
 function handleModeButton() {
   displayMode.value = displayMode.value === "image" ? "text" : "image";
+}
+
+function handleImageUrlDemoUpdate() {
+  activePlayer.value?.stop();
+  finishedAt.value = "";
+  imageUrlVersion.value += 1;
+  imageUrl.value = buildImageUrl(imageUrlVersion.value);
+}
+
+function handleFirstSegmentsDemo() {
+  applySegmentAssetsDemo(SVG_PLAYER_SEGMENT_ASSETS.slice(0, 2), "前 2 段");
+}
+
+function handleMiddleSegmentsDemo() {
+  applySegmentAssetsDemo(SVG_PLAYER_SEGMENT_ASSETS.slice(1, 4), "中间 3 段");
+}
+
+function handleLastSegmentsDemo() {
+  applySegmentAssetsDemo(SVG_PLAYER_SEGMENT_ASSETS.slice(3), "后 2 段");
+}
+
+function handleRestoreAllSegmentsDemo() {
+  applySegmentAssetsDemo(SVG_PLAYER_SEGMENT_ASSETS, "全部 5 段");
 }
 
 async function handleSegmentButton(index: number) {
@@ -234,6 +337,7 @@ const canAdjustRate = computed(
 const canToggleMode = computed(
   () => !loading.value && !errorText.value && segmentAssets.value.length > 0,
 );
+const canUpdateDemoProps = computed(() => !loading.value && !errorText.value);
 const canPlaySegment = computed(
   () =>
     !loading.value &&
@@ -251,6 +355,9 @@ const modeButtonText = computed(() =>
 );
 const displayModeText = computed(() =>
   displayMode.value === "image" ? "图文播放" : "纯文字播放",
+);
+const imageUrlVersionText = computed(() =>
+  imageUrlVersion.value > 0 ? `demo-${imageUrlVersion.value}` : "original",
 );
 const playerPropsData = computed(() => ({
   imageUrl: imageUrl.value,
@@ -343,6 +450,13 @@ onMounted(async () => {
   display: flex;
   gap: 8px;
   flex-wrap: wrap;
+}
+
+.prop-demo {
+  border-top: 1px solid #e5e7eb;
+  padding-top: 10px;
+  display: grid;
+  gap: 8px;
 }
 
 button {

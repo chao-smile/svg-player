@@ -110,6 +110,7 @@ export type PlayerState = "loading" | "idle" | "playing" | "paused" | "error";
 
 export type SvgSequencePlayerExpose = {
   playAll: () => Promise<void>;
+  playSegment: (index: number) => Promise<void>;
   pause: () => void;
   resume: () => Promise<void>;
   togglePause: () => void;

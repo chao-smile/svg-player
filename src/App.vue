@@ -54,6 +54,19 @@
         </button>
       </div>
 
+      <div v-if="segmentAssets.length" class="segment-actions">
+        <button
+          v-for="(item, index) in segmentAssets"
+          :key="item.id ?? index"
+          :disabled="!canPlaySegment"
+          class="secondary"
+          :title="item.text"
+          @click="handleSegmentButton(index)"
+        >
+          播放第 {{ index + 1 }} 段
+        </button>
+      </div>
+
       <div v-if="loading">加载 manifest 中...</div>
       <div v-else-if="errorText" class="error">{{ errorText }}</div>
     </section>
@@ -181,6 +194,11 @@ function handleModeButton() {
   displayMode.value = displayMode.value === "image" ? "text" : "image";
 }
 
+async function handleSegmentButton(index: number) {
+  finishedAt.value = "";
+  await activePlayer.value?.playSegment(index);
+}
+
 // 由组件抛出的事件回填到 demo 状态栏。
 function onPlayerFinished() {
   finishedCount.value += 1;
@@ -215,6 +233,14 @@ const canAdjustRate = computed(
 );
 const canToggleMode = computed(
   () => !loading.value && !errorText.value && segmentAssets.value.length > 0,
+);
+const canPlaySegment = computed(
+  () =>
+    !loading.value &&
+    !errorText.value &&
+    segmentAssets.value.length > 0 &&
+    playerState.value !== "loading" &&
+    playerState.value !== "error",
 );
 const pauseText = computed(() =>
   playerState.value === "paused" ? "继续" : "暂停",
@@ -308,6 +334,12 @@ onMounted(async () => {
 }
 
 .actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.segment-actions {
   display: flex;
   gap: 8px;
   flex-wrap: wrap;

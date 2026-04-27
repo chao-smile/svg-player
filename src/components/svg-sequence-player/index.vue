@@ -380,8 +380,8 @@ function seekToMs(ms: number, token: number) {
   });
 }
 
-// 播放单个分段并返回是否成功完成。
-async function playSegment(index: number, token: number): Promise<boolean> {
+// 内部播放单个分段并返回是否成功完成，由连续播放和对外单段播放共同复用。
+async function playSegmentInternal(index: number, token: number): Promise<boolean> {
   const segment = segments.value[index];
   if (!segment) return false;
 
@@ -469,7 +469,7 @@ async function playAll() {
   const token = sequenceToken;
 
   for (let i = 0; i < segments.value.length; i++) {
-    const ok = await playSegment(i, token);
+    const ok = await playSegmentInternal(i, token);
     if (!ok || token !== sequenceToken) return;
   }
 
@@ -480,6 +480,32 @@ async function playAll() {
   currentTimeMs.value = 0;
   setState("idle");
   emit("finished");
+}
+
+// 对外播放指定分段：保留完整数据源，只重置播放状态并定位到目标段。
+async function playSegment(index: number) {
+  if (
+    !segments.value[index] ||
+    playerState.value === "loading" ||
+    playerState.value === "error"
+  )
+    return;
+
+  stopInternal(false);
+  resetAllProgress();
+  setState("playing");
+
+  sequenceToken += 1;
+  const token = sequenceToken;
+  const ok = await playSegmentInternal(index, token);
+  if (!ok || token !== sequenceToken) return;
+
+  audio.pause();
+  stopRaf();
+  currentSegmentIndex.value = -1;
+  lastRenderedSegmentIndex = -1;
+  currentTimeMs.value = 0;
+  setState("idle");
 }
 
 // 暂停播放并保持当前进度。
@@ -1043,6 +1069,7 @@ onBeforeUnmount(() => {
 
 defineExpose<SvgSequencePlayerExpose>({
   playAll,
+  playSegment,
   pause,
   resume,
   togglePause,

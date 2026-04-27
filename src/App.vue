@@ -94,6 +94,13 @@
           <button
             :disabled="!canUpdateDemoProps"
             class="secondary"
+            @click="handleEmptySegmentsDemo"
+          >
+            空数组数据
+          </button>
+          <button
+            :disabled="!canUpdateDemoProps"
+            class="secondary"
             @click="handleRestoreAllSegmentsDemo"
           >
             恢复全部数据
@@ -121,7 +128,7 @@
     <section
       class="panel player-panel"
       :class="{ 'text-mode': displayMode === 'text' }"
-      v-if="segmentAssets.length && imageUrl"
+      v-if="imageUrl"
     >
       <SvgSequencePlayer
         ref="playerRef"
@@ -136,7 +143,7 @@
       />
     </section>
 
-    <section class="panel" v-if="segmentAssets.length && imageUrl">
+    <section class="panel" v-if="imageUrl">
       <div class="title">SvgSequencePlayer Props</div>
       <pre class="props-preview">{{ playerPropsJson }}</pre>
     </section>
@@ -291,6 +298,10 @@ function handleMiddleSegmentsDemo() {
 
 function handleLastSegmentsDemo() {
   applySegmentAssetsDemo(SVG_PLAYER_SEGMENT_ASSETS.slice(3), "后 2 段");
+}
+
+function handleEmptySegmentsDemo() {
+  applySegmentAssetsDemo([], "空数组");
 }
 
 function handleRestoreAllSegmentsDemo() {

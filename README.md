@@ -109,7 +109,8 @@ type SegmentAsset = {
 说明：
 
 - `audio_url` 必填，不能为空
-- `ocr_tts` 必填，且至少要有 1 个词
+- 单个 segment 的 `ocr_tts` 必填，且至少要有 1 个词
+- `segmentAssets` 可以传空数组；此时组件不会播放段落，但 `imageUrl` 对应的图片会正常展示
 - `rotated_rect` 当前至少会读取前 4 位，按 `[centerX, centerY, width, height, angle]` 处理
 - `begin_time` / `end_time` 单位为毫秒
 - 如果某个词缺少合法时间，组件仍会渲染，但该词不会参与时间驱动高亮
@@ -182,7 +183,7 @@ await playerRef.value?.playSegment(2); // 播放第 3 段
 - `播放第 N 段`：调用组件暴露的 `playSegment(index)`，只播放对应段
 - `切换纯文字` / `切换图文`：在图片高亮模式和纯文字滚动模式之间切换
 - `更新 imageUrl`：给同一张图片 URL 添加 demo query，用来演示 `imageUrl` prop 更新会触发组件重新加载
-- `前 2 段数据` / `中间 3 段数据` / `后 2 段数据` / `恢复全部数据`：从现有 5 段 mock 数据中切片并克隆，用来演示 `segmentAssets` prop 更新会触发组件重新加载
+- `前 2 段数据` / `中间 3 段数据` / `后 2 段数据` / `空数组数据` / `恢复全部数据`：从现有 5 段 mock 数据中切片并克隆，用来演示 `segmentAssets` prop 更新会触发组件重新加载
 
 这些演示按钮都只更新父组件传给 `SvgSequencePlayer` 的 props，不需要卸载播放器组件。
 

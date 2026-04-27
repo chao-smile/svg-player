@@ -15,13 +15,14 @@
       class="stage"
       v-if="
         displayMode === 'image' &&
-        segments.length &&
+        imageUrl &&
         imageWidth > 0 &&
         imageHeight > 0
       "
     >
       <img class="image" :src="imageUrl" alt="shared image" />
       <svg
+        v-if="segments.length"
         class="overlay"
         :viewBox="`0 0 ${imageWidth} ${imageHeight}`"
         preserveAspectRatio="none"

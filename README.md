@@ -38,6 +38,7 @@ npm run dev
 
   <div class="actions">
     <button @click="playerRef?.playAll()">播放全部</button>
+    <button @click="playerRef?.playSegment(0)">播放第 1 段</button>
     <button @click="playerRef?.togglePause()">暂停 / 继续</button>
     <button @click="playerRef?.stop()">停止</button>
   </div>
@@ -133,6 +134,8 @@ type SegmentAsset = {
 
 - 传入 `sourceImageWidth` / `sourceImageHeight` 可以避免组件额外解析图片尺寸
 - 如果图片尺寸也拿不到，组件会退回到基于 OCR 词框推导出的最小可用尺寸
+- `imageUrl`、`segmentAssets`、`sourceImageWidth`、`sourceImageHeight` 变化时，组件会停止当前播放并重新构建内部模型
+- `segmentAssets` 使用深度监听，调用方原地修改 `ocr_tts` 中的词文本、时间戳或坐标时，也会触发重新加载
 
 ## 事件
 
@@ -156,11 +159,32 @@ type SegmentAsset = {
 | 方法 | 返回值 | 说明 |
 | --- | --- | --- |
 | `playAll()` | `Promise<void>` | 从头顺序播放全部 segment |
+| `playSegment(index)` | `Promise<void>` | 播放指定下标的单个 segment，`index` 从 `0` 开始 |
 | `pause()` | `void` | 暂停播放 |
 | `resume()` | `Promise<void>` | 从暂停状态恢复播放 |
 | `togglePause()` | `void` | 在暂停与继续之间切换 |
 | `stop()` | `void` | 停止播放并回到可重播状态 |
 | `getState()` | `PlayerState` | 获取当前播放器状态 |
+
+示例：
+
+```ts
+await playerRef.value?.playSegment(2); // 播放第 3 段
+```
+
+`playSegment(index)` 不需要调用方重新裁剪或替换数据源。推荐一次性传入完整 `segmentAssets`，再通过该方法定位到具体段落播放。
+
+## Demo 操作说明
+
+当前 demo 页面包含几类操作：
+
+- `开始顺序播放`：按当前 `segmentAssets` 从第一段播放到最后一段
+- `播放第 N 段`：调用组件暴露的 `playSegment(index)`，只播放对应段
+- `切换纯文字` / `切换图文`：在图片高亮模式和纯文字滚动模式之间切换
+- `更新 imageUrl`：给同一张图片 URL 添加 demo query，用来演示 `imageUrl` prop 更新会触发组件重新加载
+- `前 2 段数据` / `中间 3 段数据` / `后 2 段数据` / `恢复全部数据`：从现有 5 段 mock 数据中切片并克隆，用来演示 `segmentAssets` prop 更新会触发组件重新加载
+
+这些演示按钮都只更新父组件传给 `SvgSequencePlayer` 的 props，不需要卸载播放器组件。
 
 ## 现有示例数据来源
 

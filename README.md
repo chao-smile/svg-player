@@ -182,8 +182,7 @@ await playerRef.value?.playSegment(2); // 播放第 3 段
 - `开始顺序播放`：按当前 `segmentAssets` 从第一段播放到最后一段
 - `播放第 N 段`：调用组件暴露的 `playSegment(index)`，只播放对应段
 - `切换纯文字` / `切换图文`：在图片高亮模式和纯文字滚动模式之间切换
-- `更新 imageUrl`：给同一张图片 URL 添加 demo query，用来演示 `imageUrl` prop 更新会触发组件重新加载
-- `前 2 段数据` / `中间 3 段数据` / `后 2 段数据` / `空数组数据` / `恢复全部数据`：从现有 5 段 mock 数据中切片并克隆，用来演示 `segmentAssets` prop 更新会触发组件重新加载
+- `切换到长文本 mock` / `切换到原有 mock`：在原有 5 段 mock 数据和新增的长文本单段 mock 数据之间交替切换，用来演示 `imageUrl`、图片尺寸和 `segmentAssets` 同时更新时组件会重新加载
 
 这些演示按钮都只更新父组件传给 `SvgSequencePlayer` 的 props，不需要卸载播放器组件。
 
@@ -193,6 +192,7 @@ await playerRef.value?.playSegment(2); // 播放第 3 段
 
 1. [src/mock/svg-player/manifest.json](/Users/pincoudeduanyin/Desktop/demo/ocr/svg-player/src/mock/svg-player/manifest.json) 描述分段资源
 2. [src/mock/svgPlayerMock.ts](/Users/pincoudeduanyin/Desktop/demo/ocr/svg-player/src/mock/svgPlayerMock.ts) 将 `ocr.json` 和 `tts.json` 合并为组件所需的 `SegmentAsset[]`
-3. [src/App.vue](/Users/pincoudeduanyin/Desktop/demo/ocr/svg-player/src/App.vue) 负责加载数据并调用播放器暴露方法
+3. [src/mock/svg-player/long-text.segment-assets.json](/Users/pincoudeduanyin/Desktop/demo/ocr/svg-player/src/mock/svg-player/long-text.segment-assets.json) 提供新增的长文本单段 mock 数据
+4. [src/App.vue](/Users/pincoudeduanyin/Desktop/demo/ocr/svg-player/src/App.vue) 负责加载数据、切换 mock 数据并调用播放器暴露方法
 
 如果你的数据源也是 `OCR JSON + TTS JSON` 分离存储，可以直接复用这个合并思路。

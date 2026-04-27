@@ -10,13 +10,16 @@
 
     <section class="panel">
       <div class="line manifest-line">
-        <b>Manifest:</b>
+        <b>Original Manifest:</b>
         <code class="manifest-code" :title="MANIFEST_URL">{{
           MANIFEST_URL
         }}</code>
       </div>
-      <div v-if="manifest" class="line">
-        <b>Segments:</b> {{ manifest.segment_count }}
+      <div class="line">
+        <b>Current Mock:</b> {{ currentDatasetLabel }}
+      </div>
+      <div class="line">
+        <b>Segments:</b> {{ segmentAssets.length }}
       </div>
       <div class="line">
         <b>Used Mock Files:</b> {{ SVG_PLAYER_USED_MOCK_FILES.length }}
@@ -57,53 +60,18 @@
       <div class="prop-demo">
         <div class="title">Props 更新演示</div>
         <div class="line">
-          <b>Image URL Version:</b> {{ imageUrlVersionText }}
+          <b>Image Size:</b> {{ sourceImageWidth }} x {{ sourceImageHeight }}
         </div>
         <div class="line">
-          <b>SegmentAssets:</b> {{ segmentAssetsVariant }}
+          <b>SegmentAssets:</b> {{ currentDatasetLabel }}
         </div>
         <div class="actions">
           <button
             :disabled="!canUpdateDemoProps"
             class="secondary"
-            @click="handleImageUrlDemoUpdate"
+            @click="handleToggleDemoDataset"
           >
-            更新 imageUrl
-          </button>
-          <button
-            :disabled="!canUpdateDemoProps"
-            class="secondary"
-            @click="handleFirstSegmentsDemo"
-          >
-            前 2 段数据
-          </button>
-          <button
-            :disabled="!canUpdateDemoProps"
-            class="secondary"
-            @click="handleMiddleSegmentsDemo"
-          >
-            中间 3 段数据
-          </button>
-          <button
-            :disabled="!canUpdateDemoProps"
-            class="secondary"
-            @click="handleLastSegmentsDemo"
-          >
-            后 2 段数据
-          </button>
-          <button
-            :disabled="!canUpdateDemoProps"
-            class="secondary"
-            @click="handleEmptySegmentsDemo"
-          >
-            空数组数据
-          </button>
-          <button
-            :disabled="!canUpdateDemoProps"
-            class="secondary"
-            @click="handleRestoreAllSegmentsDemo"
-          >
-            恢复全部数据
+            {{ toggleDatasetButtonText }}
           </button>
         </div>
       </div>
@@ -148,12 +116,12 @@
       <pre class="props-preview">{{ playerPropsJson }}</pre>
     </section>
 
-    <section class="panel" v-if="manifest">
+    <section class="panel" v-if="segmentRows.length">
       <div class="title">段落清单</div>
-      <div v-for="item in manifest.segments" :key="item.id" class="segment-row">
+      <div v-for="item in segmentRows" :key="item.id" class="segment-row">
         <code>{{ item.id }}</code>
         <span>{{ item.text }}</span>
-        <span class="dim">{{ item.duration_ms }}ms</span>
+        <span class="dim">{{ item.durationMs }}ms</span>
       </div>
     </section>
   </main>
@@ -165,25 +133,31 @@ import { SvgSequencePlayer } from "./components/svg-sequence-player";
 import type {
   PlayerState,
   SegmentAsset,
-  SegmentManifest,
   SvgSequencePlayerExpose,
 } from "./components/svg-sequence-player";
 import {
   SVG_PLAYER_DATA_ROOT,
+  SVG_PLAYER_IMAGE_HEIGHT,
   SVG_PLAYER_IMAGE_URL,
-  SVG_PLAYER_MANIFEST,
+  SVG_PLAYER_IMAGE_WIDTH,
+  SVG_PLAYER_LONG_TEXT_IMAGE_HEIGHT,
+  SVG_PLAYER_LONG_TEXT_IMAGE_URL,
+  SVG_PLAYER_LONG_TEXT_IMAGE_WIDTH,
+  SVG_PLAYER_LONG_TEXT_SEGMENT_ASSETS,
   SVG_PLAYER_MANIFEST_URL,
   SVG_PLAYER_SEGMENT_ASSETS,
   SVG_PLAYER_USED_MOCK_FILES,
 } from "./mock/svgPlayerMock";
 
 const MANIFEST_URL = `${SVG_PLAYER_MANIFEST_URL} (from ${SVG_PLAYER_DATA_ROOT})`;
+type DemoDataset = "original" | "longText";
 
 // Demo 页面状态：加载、错误、当前传给播放器的数据。
 const loading = ref(true);
 const errorText = ref("");
-const manifest = ref<SegmentManifest | null>(null);
 const imageUrl = ref("");
+const sourceImageWidth = ref(SVG_PLAYER_IMAGE_WIDTH);
+const sourceImageHeight = ref(SVG_PLAYER_IMAGE_HEIGHT);
 const segmentAssets = ref<SegmentAsset[]>([]);
 
 const playerRef = ref<SvgSequencePlayerExpose | null>(null);
@@ -192,15 +166,11 @@ const playerRef = ref<SvgSequencePlayerExpose | null>(null);
 const playerState = ref<PlayerState>("loading");
 const finishedCount = ref(0);
 const finishedAt = ref("");
-const imageUrlVersion = ref(0);
-const segmentAssetsVariant = ref("全部 5 段");
+const currentDataset = ref<DemoDataset>("original");
 const playbackRateOptions = [1, 1.25, 1.5, 2] as const;
 const playbackRate = ref<number>(playbackRateOptions[0]);
 const displayMode = ref<"image" | "text">("image");
 const activePlayer = computed(() => playerRef.value);
-// 示例：显式传入原图尺寸。若不传，播放器会退回到 imageUrl 自解析尺寸。
-const sourceImageWidth = 1235;
-const sourceImageHeight = 774;
 
 function cloneSegmentAssets(assets: SegmentAsset[]): SegmentAsset[] {
   return assets.map((asset) => ({
@@ -214,32 +184,30 @@ function cloneSegmentAssets(assets: SegmentAsset[]): SegmentAsset[] {
   }));
 }
 
-function buildImageUrl(version: number) {
-  if (version <= 0) return SVG_PLAYER_IMAGE_URL;
-  const url = new URL(SVG_PLAYER_IMAGE_URL, window.location.href);
-  url.searchParams.set("demoImageVersion", String(version));
-  return url.href;
-}
-
-function applySegmentAssetsDemo(
-  nextAssets: SegmentAsset[],
-  variant: string,
-) {
+function applyDemoDataset(dataset: DemoDataset) {
   activePlayer.value?.stop();
   finishedAt.value = "";
-  segmentAssetsVariant.value = variant;
-  segmentAssets.value = cloneSegmentAssets(nextAssets);
+  currentDataset.value = dataset;
+
+  if (dataset === "longText") {
+    imageUrl.value = SVG_PLAYER_LONG_TEXT_IMAGE_URL;
+    sourceImageWidth.value = SVG_PLAYER_LONG_TEXT_IMAGE_WIDTH;
+    sourceImageHeight.value = SVG_PLAYER_LONG_TEXT_IMAGE_HEIGHT;
+    segmentAssets.value = cloneSegmentAssets(SVG_PLAYER_LONG_TEXT_SEGMENT_ASSETS);
+    return;
+  }
+
+  imageUrl.value = SVG_PLAYER_IMAGE_URL;
+  sourceImageWidth.value = SVG_PLAYER_IMAGE_WIDTH;
+  sourceImageHeight.value = SVG_PLAYER_IMAGE_HEIGHT;
+  segmentAssets.value = cloneSegmentAssets(SVG_PLAYER_SEGMENT_ASSETS);
 }
 
 async function loadManifest() {
   loading.value = true;
   errorText.value = "";
   try {
-    manifest.value = SVG_PLAYER_MANIFEST;
-    imageUrlVersion.value = 0;
-    segmentAssetsVariant.value = "全部 5 段";
-    imageUrl.value = SVG_PLAYER_IMAGE_URL;
-    segmentAssets.value = cloneSegmentAssets(SVG_PLAYER_SEGMENT_ASSETS);
+    applyDemoDataset("original");
   } catch (e) {
     errorText.value = String((e as Error)?.message ?? e);
   } finally {
@@ -281,31 +249,8 @@ function handleModeButton() {
   displayMode.value = displayMode.value === "image" ? "text" : "image";
 }
 
-function handleImageUrlDemoUpdate() {
-  activePlayer.value?.stop();
-  finishedAt.value = "";
-  imageUrlVersion.value += 1;
-  imageUrl.value = buildImageUrl(imageUrlVersion.value);
-}
-
-function handleFirstSegmentsDemo() {
-  applySegmentAssetsDemo(SVG_PLAYER_SEGMENT_ASSETS.slice(0, 2), "前 2 段");
-}
-
-function handleMiddleSegmentsDemo() {
-  applySegmentAssetsDemo(SVG_PLAYER_SEGMENT_ASSETS.slice(1, 4), "中间 3 段");
-}
-
-function handleLastSegmentsDemo() {
-  applySegmentAssetsDemo(SVG_PLAYER_SEGMENT_ASSETS.slice(3), "后 2 段");
-}
-
-function handleEmptySegmentsDemo() {
-  applySegmentAssetsDemo([], "空数组");
-}
-
-function handleRestoreAllSegmentsDemo() {
-  applySegmentAssetsDemo(SVG_PLAYER_SEGMENT_ASSETS, "全部 5 段");
+function handleToggleDemoDataset() {
+  applyDemoDataset(currentDataset.value === "original" ? "longText" : "original");
 }
 
 async function handleSegmentButton(index: number) {
@@ -367,19 +312,40 @@ const modeButtonText = computed(() =>
 const displayModeText = computed(() =>
   displayMode.value === "image" ? "图文播放" : "纯文字播放",
 );
-const imageUrlVersionText = computed(() =>
-  imageUrlVersion.value > 0 ? `demo-${imageUrlVersion.value}` : "original",
+const currentDatasetLabel = computed(() =>
+  currentDataset.value === "original" ? "原有 mock 数据" : "长文本 mock 数据",
+);
+const toggleDatasetButtonText = computed(() =>
+  currentDataset.value === "original"
+    ? "切换到长文本 mock"
+    : "切换到原有 mock",
 );
 const playerPropsData = computed(() => ({
   imageUrl: imageUrl.value,
   segmentAssets: segmentAssets.value,
-  sourceImageWidth,
-  sourceImageHeight,
+  sourceImageWidth: sourceImageWidth.value,
+  sourceImageHeight: sourceImageHeight.value,
   displayMode: displayMode.value,
   playbackRate: playbackRate.value,
 }));
 const playerPropsJson = computed(() =>
   JSON.stringify(playerPropsData.value, null, 2),
+);
+const segmentRows = computed(() =>
+  segmentAssets.value.map((segment, index) => {
+    const times = segment.ocr_tts.flatMap((word) => [
+      Number(word.begin_time),
+      Number(word.end_time),
+    ]).filter((time) => Number.isFinite(time));
+    const durationMs = times.length
+      ? Math.max(...times) - Math.min(...times)
+      : 0;
+    return {
+      id: segment.id ?? `segment-${index + 1}`,
+      text: segment.text,
+      durationMs,
+    };
+  }),
 );
 
 // 首次进入页面加载 mock 数据，并同步一次组件状态。

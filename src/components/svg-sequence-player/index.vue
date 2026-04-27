@@ -219,6 +219,10 @@ let raf = 0;
 let stopAtMs: number | null = null;
 // 播放流程令牌：用于中断旧异步流程。
 let sequenceToken = 0;
+// 数据加载令牌：用于忽略过期的异步模型构建结果。
+let modelLoadToken = 0;
+// 当前模型加载 Promise；外部播放调用会等待它完成，避免异步 props 刚更新时播放无响应。
+let pendingModelLoad: Promise<boolean> | null = null;
 // 当前分段播放 Promise 的 resolve 回调。
 let resolveSegment: ((ok: boolean) => void) | null = null;
 // 当前分段事件监听清理函数。
@@ -455,9 +459,9 @@ function stopInternal(setIdleState = true) {
 
 // 串行播放全部 segments；若 token 变化说明被中断，立即退出。
 async function playAll() {
+  if (!(await waitForModelReady())) return;
   if (
     !segments.value.length ||
-    playerState.value === "loading" ||
     playerState.value === "error"
   )
     return;
@@ -485,9 +489,9 @@ async function playAll() {
 
 // 对外播放指定分段：保留完整数据源，只重置播放状态并定位到目标段。
 async function playSegment(index: number) {
+  if (!(await waitForModelReady())) return;
   if (
     !segments.value[index] ||
-    playerState.value === "loading" ||
     playerState.value === "error"
   )
     return;
@@ -564,7 +568,7 @@ function resolveImageSize(url: string): Promise<{ width: number; height: number 
 }
 
 // 加载并归一化 segment 数据模型，构建可渲染运行时状态。
-async function loadModels() {
+async function loadModels(token: number): Promise<boolean> {
   setState("loading");
   errorText.value = "";
   try {
@@ -587,6 +591,7 @@ async function loadModels() {
       imageWidth: imageWidthBase,
       imageHeight: imageHeightBase,
     });
+    if (token !== modelLoadToken) return false;
     imageWidth.value = loaded.imageWidth || imageWidthBase;
     imageHeight.value = loaded.imageHeight || imageHeightBase;
     segments.value = loaded.segments;
@@ -599,10 +604,21 @@ async function loadModels() {
         centerActiveTextLine("auto", true);
       }
     });
+    return true;
   } catch (e) {
+    if (token !== modelLoadToken) return false;
     errorText.value = String((e as Error)?.message ?? e);
     setState("error");
+    return false;
   }
+}
+
+// 等待当前模型加载结束；数据异步传入后立即播放时需要先等 watch 触发的重建完成。
+async function waitForModelReady() {
+  if (pendingModelLoad) {
+    await pendingModelLoad;
+  }
+  return playerState.value !== "loading" && playerState.value !== "error";
 }
 
 // 主题变量：提供给样式层的高亮色与圆角参数。
@@ -1023,7 +1039,11 @@ function syncSegmentSource() {
   lastCenteredTextLineId = "";
   programmaticScrollLockUntil = 0;
   stopInternal(false);
-  void loadModels();
+  modelLoadToken += 1;
+  const token = modelLoadToken;
+  pendingModelLoad = loadModels(token).finally(() => {
+    if (token === modelLoadToken) pendingModelLoad = null;
+  });
 }
 
 // 明确监听数据源 props，而不是在 onUpdated 中用不完整签名推断变化。

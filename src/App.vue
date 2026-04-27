@@ -65,6 +65,9 @@
         <div class="line">
           <b>SegmentAssets:</b> {{ currentDatasetLabel }}
         </div>
+        <div class="line">
+          <b>Async Demo:</b> {{ asyncDemoStatus }}
+        </div>
         <div class="actions">
           <button
             :disabled="!canUpdateDemoProps"
@@ -72,6 +75,13 @@
             @click="handleToggleDemoDataset"
           >
             {{ toggleDatasetButtonText }}
+          </button>
+          <button
+            :disabled="!canUpdateDemoProps"
+            class="secondary"
+            @click="handleAsyncLoadAndPlayDemo"
+          >
+            异步加载并立即播放
           </button>
         </div>
       </div>
@@ -167,6 +177,8 @@ const playerState = ref<PlayerState>("loading");
 const finishedCount = ref(0);
 const finishedAt = ref("");
 const currentDataset = ref<DemoDataset>("original");
+const asyncDemoStatus = ref("未触发");
+let asyncDemoToken = 0;
 const playbackRateOptions = [1, 1.25, 1.5, 2] as const;
 const playbackRate = ref<number>(playbackRateOptions[0]);
 const displayMode = ref<"image" | "text">("image");
@@ -187,6 +199,7 @@ function cloneSegmentAssets(assets: SegmentAsset[]): SegmentAsset[] {
 function applyDemoDataset(dataset: DemoDataset) {
   activePlayer.value?.stop();
   finishedAt.value = "";
+  asyncDemoStatus.value = "未触发";
   currentDataset.value = dataset;
 
   if (dataset === "longText") {
@@ -251,6 +264,30 @@ function handleModeButton() {
 
 function handleToggleDemoDataset() {
   applyDemoDataset(currentDataset.value === "original" ? "longText" : "original");
+}
+
+async function handleAsyncLoadAndPlayDemo() {
+  asyncDemoToken += 1;
+  const token = asyncDemoToken;
+  activePlayer.value?.stop();
+  finishedAt.value = "";
+  currentDataset.value = "longText";
+  imageUrl.value = SVG_PLAYER_LONG_TEXT_IMAGE_URL;
+  sourceImageWidth.value = SVG_PLAYER_LONG_TEXT_IMAGE_WIDTH;
+  sourceImageHeight.value = SVG_PLAYER_LONG_TEXT_IMAGE_HEIGHT;
+  segmentAssets.value = [];
+  asyncDemoStatus.value = "已清空 segmentAssets，模拟异步请求中";
+
+  await new Promise((resolve) => window.setTimeout(resolve, 800));
+  if (token !== asyncDemoToken) return;
+
+  segmentAssets.value = cloneSegmentAssets(SVG_PLAYER_LONG_TEXT_SEGMENT_ASSETS);
+  asyncDemoStatus.value = "数据已写入，立即调用 playSegment(0)";
+  await nextTick();
+  await activePlayer.value?.playSegment(0);
+
+  if (token !== asyncDemoToken) return;
+  asyncDemoStatus.value = "playSegment(0) 调用完成";
 }
 
 async function handleSegmentButton(index: number) {

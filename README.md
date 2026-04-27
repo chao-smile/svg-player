@@ -183,6 +183,7 @@ await playerRef.value?.playSegment(2); // 播放第 3 段
 - `播放第 N 段`：调用组件暴露的 `playSegment(index)`，只播放对应段
 - `切换纯文字` / `切换图文`：在图片高亮模式和纯文字滚动模式之间切换
 - `切换到长文本 mock` / `切换到原有 mock`：在原有 5 段 mock 数据和新增的长文本单段 mock 数据之间交替切换，用来演示 `imageUrl`、图片尺寸和 `segmentAssets` 同时更新时组件会重新加载
+- `异步加载并立即播放`：先把 `segmentAssets` 置为空数组，再延迟写入长文本 mock 数据，并立刻调用 `playSegment(0)`，用来演示异步数据刚更新后立即播放的场景
 
 这些演示按钮都只更新父组件传给 `SvgSequencePlayer` 的 props，不需要卸载播放器组件。
 

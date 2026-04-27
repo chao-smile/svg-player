@@ -115,6 +115,7 @@ import {
   onUpdated,
   reactive,
   ref,
+  watch,
 } from "vue";
 import { computeRunProgress, loadSegmentModels } from "./model";
 import type {
@@ -225,14 +226,6 @@ let cleanupSegmentListeners: (() => void) | null = null;
 let lastRenderedSegmentIndex = -1;
 // 上一次已居中的文本行 id（用于避免同一行重复触发滚动动画）。
 let lastCenteredTextLineId = "";
-// 上一次 segmentAssets 内容签名快照（用于显式对比更新）。
-let prevSegmentAssetsSignature = "";
-// 上一次 imageUrl 快照（用于显式对比更新）。
-let prevImageUrl = "";
-// 上一次 sourceImageWidth 快照。
-let prevImageWidth = NaN;
-// 上一次 sourceImageHeight 快照。
-let prevImageHeight = NaN;
 // 上一次倍速快照（避免重复写入 audio.playbackRate）。
 let prevPlaybackRate = NaN;
 // 上一次展示模式快照（用于模式切换副作用控制）。
@@ -998,50 +991,32 @@ function syncPlaybackRate(force = false) {
   applyPlaybackRate(rate);
 }
 
-// 计算分段资源签名：用于检测“数组引用不变但内容变更”的场景。
-function buildSegmentAssetsSignature(assets: SegmentAsset[]): string {
-  return assets
-    .map((asset, index) => {
-      const ocrTts = Array.isArray(asset.ocr_tts) ? asset.ocr_tts : [];
-      const firstWord = ocrTts[0];
-      const lastWord = ocrTts[ocrTts.length - 1];
-      return [
-        index,
-        String(asset.id ?? ""),
-        String(asset.audio_url ?? ""),
-        String(asset.text ?? ""),
-        ocrTts.length,
-        String(firstWord?.begin_time ?? ""),
-        String(firstWord?.text ?? ""),
-        String(lastWord?.end_time ?? ""),
-        String(lastWord?.text ?? ""),
-      ].join(":");
-    })
-    .join("|");
-}
-
 // 数据源同步：segment 或 image 变化时重建模型，数据流入口集中在这里。
-function syncSegmentSource(force = false) {
-  const segmentAssetsSignature = buildSegmentAssetsSignature(props.segmentAssets);
-  const assetsChanged = prevSegmentAssetsSignature !== segmentAssetsSignature;
-  const imageChanged = prevImageUrl !== props.imageUrl;
-  const widthChanged = prevImageWidth !== Number(props.sourceImageWidth ?? NaN);
-  const heightChanged = prevImageHeight !== Number(props.sourceImageHeight ?? NaN);
-  if (!force && !assetsChanged && !imageChanged && !widthChanged && !heightChanged) return;
-
-  prevSegmentAssetsSignature = segmentAssetsSignature;
-  prevImageUrl = props.imageUrl;
-  prevImageWidth = Number(props.sourceImageWidth ?? NaN);
-  prevImageHeight = Number(props.sourceImageHeight ?? NaN);
+function syncSegmentSource() {
   lastCenteredTextLineId = "";
   programmaticScrollLockUntil = 0;
   stopInternal(false);
   void loadModels();
 }
 
+// 明确监听数据源 props，而不是在 onUpdated 中用不完整签名推断变化。
+// deep: true 覆盖调用方原地修改 segmentAssets/ocr_tts 字段的场景。
+watch(
+  () => ({
+    imageUrl: props.imageUrl,
+    segmentAssets: props.segmentAssets,
+    sourceImageWidth: props.sourceImageWidth,
+    sourceImageHeight: props.sourceImageHeight,
+  }),
+  () => {
+    syncSegmentSource();
+  },
+  { deep: true },
+);
+
 // 首次挂载：强制跑一轮全量同步，初始化播放器可用状态。
 onMounted(() => {
-  syncSegmentSource(true);
+  syncSegmentSource();
   syncPlaybackRate(true);
   syncDisplayMode(true);
   syncAutoFollow(true);
@@ -1049,9 +1024,8 @@ onMounted(() => {
   emit("state-change", playerState.value);
 });
 
-// 每次组件更新后执行“显式同步调度”，按需触发副作用（无 watch）。
+// 每次组件更新后同步依赖 DOM 更新的副作用；数据源变化由上方 watch 负责。
 onUpdated(() => {
-  syncSegmentSource();
   syncPlaybackRate();
   syncDisplayMode();
   syncAutoFollow();

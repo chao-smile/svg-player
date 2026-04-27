@@ -188,6 +188,7 @@ function onPlayerFinished() {
 }
 
 function onPlayerStateChange(state: PlayerState) {
+  console.log("Player state changed:", state);
   playerState.value = state;
 }
 
